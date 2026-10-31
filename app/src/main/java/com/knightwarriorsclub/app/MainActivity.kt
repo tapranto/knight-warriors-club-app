@@ -30,63 +30,163 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.ClubApi
+import com.knightwarriorsclub.app.data.Member
+import com.knightwarriorsclub.app.data.Session
+import com.knightwarriorsclub.app.data.SessionStore
+import kotlinx.coroutines.launch
 
 /**
- * Phase 1 skeleton — the approved Liquid Glass design standing on real screens:
- * ONE artwork on every screen (the Home lantern-forest — Pranto's rule,
- * 2026-11-01), glass panels, floating glass tab bar,
- * header with bell LEFT and envelope RIGHT (Pranto's order, 2026-11-01).
- * Data wiring (Supabase auth/chat) arrives in Phase 2+.
+ * Knight Warriors Club app.
+ * Phase 1: Liquid Glass screens standing (one artwork on every screen —
+ * the Home lantern-forest, Pranto's rule 2026-11-01).
+ * Phase 2: real Supabase sign-in + inbox + DM chat against the SAME
+ * database as knightwarriorsclub.com.
  */
 
-private val Gold = Color(0xFFD4A017)
-private val GoldLight = Color(0xFFF2C33B)
-private val Ink = Color(0xFF0A101C)
-private val GlassFill = Color.White.copy(alpha = 0.13f)
-private val GlassRim = Color.White.copy(alpha = 0.38f)
+val Gold = Color(0xFFD4A017)
+val GoldLight = Color(0xFFF2C33B)
+val Ink = Color(0xFF0A101C)
+val GlassFill = Color.White.copy(alpha = 0.13f)
+val GlassRim = Color.White.copy(alpha = 0.38f)
 
-enum class Tab(val label: String, val icon: ImageVector, val bg: Int) {
-    Home("Home", Icons.Filled.Home, R.drawable.bg_home),
-    News("News", Icons.Filled.Email, R.drawable.bg_home),
-    Events("Events", Icons.Filled.Flag, R.drawable.bg_home),
-    More("More", Icons.Filled.Menu, R.drawable.bg_home)
+enum class Tab(val label: String, val icon: ImageVector) {
+    Home("Home", Icons.Filled.Home),
+    News("News", Icons.Filled.Email),
+    Events("Events", Icons.Filled.Flag),
+    More("More", Icons.Filled.Menu)
+}
+
+private sealed interface Screen {
+    data object Tabs : Screen
+    data object Inbox : Screen
+    data class Chat(val partner: Member) : Screen
 }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { ClubApp() }
+        val store = SessionStore(this)
+        setContent { ClubApp(store) }
     }
 }
 
 @Composable
-fun ClubApp() {
+fun ClubApp(store: SessionStore) {
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(true) }
+    var session by remember { mutableStateOf<Session?>(null) }
+    var me by remember { mutableStateOf<Member?>(null) }
+    var screen by remember { mutableStateOf<Screen>(Screen.Tabs) }
     var tab by remember { mutableStateOf(Tab.Home) }
+    var loginBusy by remember { mutableStateOf(false) }
+    var loginError by remember { mutableStateOf<String?>(null) }
+    var unreadTotal by remember { mutableStateOf(0) }
+
+    // restore a saved session on launch (sign in once per device)
+    LaunchedEffect(Unit) {
+        val rt = store.refreshToken()
+        if (rt != null) {
+            ClubApi.refresh(rt).onSuccess { s ->
+                session = s
+                store.save(s)
+                me = runCatching { ClubApi.myMember(s) }.getOrNull()
+            }.onFailure { store.clear() }
+        }
+        checking = false
+    }
+
+    // envelope badge = real unread DMs, refreshed when back on the tabs
+    LaunchedEffect(session, me, screen) {
+        val s = session; val m = me
+        if (s != null && m != null && screen is Screen.Tabs) {
+            unreadTotal = runCatching {
+                ClubApi.unreadCounts(s, m.id).values.sum()
+            }.getOrDefault(0)
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Ink)) {
         Image(
-            painter = painterResource(tab.bg),
+            painter = painterResource(R.drawable.bg_home),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier.fillMaxSize()
         )
         Box(Modifier.fillMaxSize().background(Color(0x59060B14))) // navy veil for contrast
-        Column(Modifier.fillMaxSize().statusBarsPadding()) {
-            ClubHeader()
-            Box(Modifier.weight(1f)) {
-                when (tab) {
-                    Tab.Home -> HomeScreen()
-                    Tab.News -> NewsScreen()
-                    Tab.Events -> EventsScreen()
-                    Tab.More -> MorePanel()
+
+        when {
+            checking -> {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Loading…", color = Color.White, fontSize = 15.sp)
                 }
             }
-            GlassTabBar(tab) { tab = it }
+            session == null -> {
+                LoginScreen(busy = loginBusy, error = loginError) { email, password ->
+                    loginBusy = true
+                    loginError = null
+                    scope.launch {
+                        ClubApi.signIn(email, password)
+                            .onSuccess { s ->
+                                session = s
+                                store.save(s)
+                                me = runCatching { ClubApi.myMember(s) }.getOrNull()
+                                if (me == null) {
+                                    loginError = "Signed in, but no member profile was found for this account."
+                                    session = null
+                                    store.clear()
+                                }
+                            }
+                            .onFailure { loginError = it.message ?: "Sign-in failed" }
+                        loginBusy = false
+                    }
+                }
+            }
+            else -> {
+                val s = session!!
+                val myProfile = me
+                Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                    when (val scr = screen) {
+                        is Screen.Chat -> ChatScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            partner = scr.partner,
+                            onBack = { screen = Screen.Inbox }
+                        )
+                        is Screen.Inbox -> InboxScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onOpenChat = { screen = Screen.Chat(it) },
+                            onBack = { screen = Screen.Tabs }
+                        )
+                        is Screen.Tabs -> {
+                            ClubHeader(unreadTotal) { screen = Screen.Inbox }
+                            Box(Modifier.weight(1f)) {
+                                when (tab) {
+                                    Tab.Home -> HomeScreen()
+                                    Tab.News -> NewsScreen()
+                                    Tab.Events -> EventsScreen()
+                                    Tab.More -> MorePanel(
+                                        me = myProfile,
+                                        onLogout = {
+                                            store.clear()
+                                            session = null
+                                            me = null
+                                            screen = Screen.Tabs
+                                            tab = Tab.Home
+                                        }
+                                    )
+                                }
+                            }
+                            GlassTabBar(tab) { tab = it }
+                        }
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun ClubHeader() {
+private fun ClubHeader(unreadTotal: Int, onEnvelopeClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -102,21 +202,29 @@ private fun ClubHeader() {
             Text("EST. 2023 • ESPORTS CLUB", color = Color(0xFFC4CEDC), fontSize = 9.sp)
         }
         // bell LEFT, envelope RIGHT — Pranto's header order
-        HeaderIcon(Icons.Filled.Notifications, "3")
+        Icon(
+            Icons.Filled.Notifications, contentDescription = "Notifications",
+            tint = Color.White, modifier = Modifier.size(26.dp)
+        )
         Spacer(Modifier.width(14.dp))
-        HeaderIcon(Icons.Filled.Email, "5")
-    }
-}
-
-@Composable
-private fun HeaderIcon(icon: ImageVector, badge: String) {
-    Box {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
-        Box(
-            Modifier.size(16.dp).align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp)
-                .clip(CircleShape).background(Color(0xFFE23B3B)),
-            contentAlignment = Alignment.Center
-        ) { Text(badge, color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+        Box(Modifier.clickable { onEnvelopeClick() }) {
+            Icon(
+                Icons.Filled.Email, contentDescription = "Inbox",
+                tint = Color.White, modifier = Modifier.size(26.dp)
+            )
+            if (unreadTotal > 0) {
+                Box(
+                    Modifier.size(16.dp).align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp)
+                        .clip(CircleShape).background(Color(0xFFE23B3B)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (unreadTotal > 9) "9+" else "$unreadTotal",
+                        color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -264,31 +372,53 @@ private fun EventsScreen() {
 }
 
 @Composable
-private fun MorePanel() {
-    // Phase 1 placeholder for the right-side More drawer content.
+private fun MorePanel(me: Member?, onLogout: () -> Unit) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { ScreenTitle("More", "Everything else in the club") }
+        item {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (me != null) InitialAvatar(me.fullName, 46)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            me?.fullName ?: "Member",
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
+                        )
+                        Text(
+                            me?.username?.let { "@$it" } ?: "Knight Warriors Club",
+                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
         listOf(
-            "Tanvir Ahmed Pranto — President" to "View profile",
             "Profile" to "Your member card & honours",
             "Leaderboard" to "Club rankings",
             "Tournaments" to "All club tournaments",
             "My Squads" to "Your teams",
             "Tournament Maker" to "Build your own tournament",
             "About the Club" to "Since 2023",
-            "Settings" to "Sounds, vibration, app lock",
-            "Log out" to ""
+            "Settings" to "Sounds, vibration, app lock"
         ).forEach { (t, s) ->
             item {
                 GlassCard(Modifier.fillMaxWidth()) {
                     Text(t, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    if (s.isNotEmpty()) Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                    Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
                 }
             }
         }
+        item {
+            GlassCard(Modifier.fillMaxWidth().clickable { onLogout() }) {
+                Text("Log out", color = Color(0xFFFF9B9B), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text("Sign out of this device", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+            }
+        }
+        item { Spacer(Modifier.height(8.dp)) }
     }
 }
 
