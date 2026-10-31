@@ -1,0 +1,12 @@
+*.iml
+.gradle/
+local.properties
+/build/
+/app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+# Signing material — NEVER commit. Losing/exposing this ends the app's update life.
+*.jks
+*.keystore
+keystore.properties
