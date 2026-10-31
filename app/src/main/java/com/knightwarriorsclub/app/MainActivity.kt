@@ -33,7 +33,8 @@ import androidx.compose.ui.unit.sp
 
 /**
  * Phase 1 skeleton — the approved Liquid Glass design standing on real screens:
- * per-screen artwork (bundled in the APK), glass panels, floating glass tab bar,
+ * ONE artwork on every screen (the Home lantern-forest — Pranto's rule,
+ * 2026-11-01), glass panels, floating glass tab bar,
  * header with bell LEFT and envelope RIGHT (Pranto's order, 2026-11-01).
  * Data wiring (Supabase auth/chat) arrives in Phase 2+.
  */
@@ -46,8 +47,8 @@ private val GlassRim = Color.White.copy(alpha = 0.38f)
 
 enum class Tab(val label: String, val icon: ImageVector, val bg: Int) {
     Home("Home", Icons.Filled.Home, R.drawable.bg_home),
-    News("News", Icons.Filled.Email, R.drawable.bg_news),
-    Events("Events", Icons.Filled.Flag, R.drawable.bg_events),
+    News("News", Icons.Filled.Email, R.drawable.bg_home),
+    Events("Events", Icons.Filled.Flag, R.drawable.bg_home),
     More("More", Icons.Filled.Menu, R.drawable.bg_home)
 }
 
