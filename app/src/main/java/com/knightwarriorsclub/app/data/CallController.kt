@@ -595,7 +595,7 @@ class CallController(private val context: Context) {
             override fun onRemoveStream(stream: MediaStream) {}
             override fun onDataChannel(channel: DataChannel) {}
             override fun onRenegotiationNeeded() {}
-        })
+        }) ?: return null
         pc = conn
         localAudio?.let { conn.addTrack(it, listOf("kwc-stream")) }
         localVideo?.let { conn.addTrack(it, listOf("kwc-stream")) }
