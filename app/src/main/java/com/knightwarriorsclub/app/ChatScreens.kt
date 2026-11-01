@@ -16,6 +16,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -28,6 +29,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.Broadcast
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Dm
 import com.knightwarriorsclub.app.data.Member
@@ -157,13 +159,16 @@ fun LoginScreen(
 fun InboxScreen(
     session: Session, me: Member,
     realtime: RealtimeClient? = null,
-    onOpenChat: (Member) -> Unit, onBack: () -> Unit
+    onOpenChat: (Member) -> Unit,
+    onOpenEveryone: () -> Unit = {},
+    onBack: () -> Unit
 ) {
     var members by remember { mutableStateOf<List<Member>>(emptyList()) }
     var unread by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var latest by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var loaded by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
+    var picking by remember { mutableStateOf(false) }
 
     // live refresh: any new DM anywhere bumps the tick and reloads the list
     DisposableEffect(me.id) {
@@ -182,30 +187,33 @@ fun InboxScreen(
         loaded = true
     }
 
+    // Messenger rule (Pranto, 2026-11-01): the inbox lists ONLY members
+    // you actually have a conversation with — everyone else is reached
+    // through the ✎ new-chat picker.
     val withHistory = members.filter { latest.containsKey(it.id) }
         .sortedByDescending { latest[it.id] }
-    val others = members.filter { !latest.containsKey(it.id) }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
-                tint = Color.White,
-                modifier = Modifier.size(26.dp).clickable { onBack() }
-            )
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text("Inbox", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text("Messages with club members", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+    if (picking) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp).clickable { picking = false }
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("New chat", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("Choose a club member", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                }
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        if (!loaded) {
-            Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
-        } else {
+            Spacer(Modifier.height(12.dp))
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(withHistory + others, key = { it.id }) { m ->
-                    GlassCard(Modifier.fillMaxWidth().clickable { onOpenChat(m) }) {
+                items(members, key = { it.id }) { m ->
+                    GlassCard(Modifier.fillMaxWidth().clickable {
+                        picking = false
+                        onOpenChat(m)
+                    }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             InitialAvatar(m.fullName)
                             Spacer(Modifier.width(12.dp))
@@ -216,20 +224,159 @@ fun InboxScreen(
                                     color = Color(0xFFC4CEDC), fontSize = 11.sp
                                 )
                             }
-                            val n = unread[m.id] ?: 0
-                            if (n > 0) {
-                                Box(
-                                    Modifier.clip(CircleShape).background(Color(0xFFE23B3B))
-                                        .padding(horizontal = 8.dp, vertical = 3.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text("$n", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+            }
+        }
+        return
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(26.dp).clickable { onBack() }
+                )
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text("Inbox", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                    Text("Messages with club members", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            // fixed for everyone: the Club Room, always pinned at the top
+            GlassCard(
+                Modifier.fillMaxWidth().clickable { onOpenEveryone() },
+                fill = Color(0x47FFBE28)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        Modifier.size(44.dp).clip(CircleShape)
+                            .background(Color(0xB3141E30)).border(1.5.dp, Gold, CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("ALL", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Everyone — Club Room", color = Color.White,
+                            fontWeight = FontWeight.SemiBold, fontSize = 15.sp
+                        )
+                        Text(
+                            "Club broadcasts from the President",
+                            color = Color(0xFFE8EDF4), fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            if (!loaded) {
+                Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+            } else if (withHistory.isEmpty()) {
+                Text(
+                    "No chats yet. Tap the gold ✎ button to start your first chat.",
+                    color = Color(0xFFC4CEDC), fontSize = 13.sp
+                )
+            } else {
+                LazyColumn(
+                    Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(withHistory, key = { it.id }) { m ->
+                        GlassCard(Modifier.fillMaxWidth().clickable { onOpenChat(m) }) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                InitialAvatar(m.fullName)
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                    Text(
+                                        m.username?.let { "@$it" } ?: "Knight Warriors member",
+                                        color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                    )
                                 }
-                            } else {
-                                latest[m.id]?.let {
-                                    Text(fmtTime(it), color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                val n = unread[m.id] ?: 0
+                                if (n > 0) {
+                                    Box(
+                                        Modifier.clip(CircleShape).background(Color(0xFFE23B3B))
+                                            .padding(horizontal = 8.dp, vertical = 3.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("$n", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                } else {
+                                    latest[m.id]?.let {
+                                        Text(fmtTime(it), color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                    }
                                 }
                             }
+                        }
+                    }
+                    item { Spacer(Modifier.height(72.dp)) }
+                }
+            }
+        }
+        // ✎ new chat — Messenger-style compose button
+        Box(
+            Modifier.align(Alignment.BottomEnd).padding(18.dp)
+                .size(54.dp).clip(CircleShape).background(Gold)
+                .clickable { picking = true },
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(Icons.Filled.Edit, contentDescription = "New chat", tint = Ink, modifier = Modifier.size(24.dp))
+        }
+    }
+}
+
+// ── Everyone — the fixed Club Room (club broadcasts) ─────────────────────
+
+@Composable
+fun EveryoneScreen(session: Session, onBack: () -> Unit) {
+    var broadcasts by remember { mutableStateOf<List<Broadcast>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        broadcasts = ClubApi.broadcasts(session)
+        loaded = true
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
+                tint = Color.White,
+                modifier = Modifier.size(26.dp).clickable { onBack() }
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("Everyone", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("Club broadcasts from the President", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (!loaded) {
+            Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+        } else if (broadcasts.isEmpty()) {
+            Text("No broadcasts yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(broadcasts, key = { it.id }) { b ->
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        if (b.title.isNotBlank()) {
+                            Text(b.title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Spacer(Modifier.height(4.dp))
+                        }
+                        Text(b.body, color = Color(0xFFF2F5F9), fontSize = 13.sp)
+                        if (b.createdAt.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "${b.createdAt.take(10)} • ${fmtTime(b.createdAt)}",
+                                color = Color(0xFFC4CEDC), fontSize = 10.sp
+                            )
                         }
                     }
                 }

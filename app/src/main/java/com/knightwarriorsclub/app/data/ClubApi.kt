@@ -39,6 +39,15 @@ data class Member(
     val avatarUrl: String?
 )
 
+/** One club broadcast — the "Everyone" room's content, posted by the President. */
+data class Broadcast(
+    val id: Long,
+    val senderId: Long,
+    val title: String,
+    val body: String,
+    val createdAt: String
+)
+
 /** One direct message. Threads display oldest → newest (Pranto's rule). */
 data class Dm(
     val id: Long,
@@ -265,8 +274,10 @@ object ClubApi {
     private fun toMember(o: JsonObject) = Member(
         id = o["id"]!!.jsonPrimitive.long,
         fullName = o["full_name"]?.jsonPrimitive?.content ?: "Member",
-        username = o["username"]?.jsonPrimitive?.content,
-        avatarUrl = o["avatar_url"]?.jsonPrimitive?.content
+        // contentOrNull, NOT content: a JSON null must stay null, otherwise
+        // the UI prints the literal text "@null" (Pranto's screenshot, v0.3.0)
+        username = o["username"]?.jsonPrimitive?.contentOrNull,
+        avatarUrl = o["avatar_url"]?.jsonPrimitive?.contentOrNull
     )
 
     /** The signed-in user's own member row (links auth user → member id). */
@@ -377,6 +388,30 @@ object ClubApi {
             }
             latest
         }.getOrDefault(emptyMap())
+    }
+
+    /** Club broadcasts for the pinned "Everyone" room, newest first (website parity). */
+    suspend fun broadcasts(session: Session): List<Broadcast> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/broadcasts",
+                mapOf(
+                    "select" to "id,sender_member_id,title,body,created_at",
+                    "order" to "created_at.desc",
+                    "limit" to "50"
+                )
+            )
+            rows.map {
+                val o = it.jsonObject
+                Broadcast(
+                    id = o["id"]!!.jsonPrimitive.long,
+                    senderId = o["sender_member_id"]?.jsonPrimitive?.long ?: 0L,
+                    title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
+                    body = o["body"]?.jsonPrimitive?.contentOrNull ?: "",
+                    createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     /** Unread DM count per sender — feeds the inbox list and header badge. */

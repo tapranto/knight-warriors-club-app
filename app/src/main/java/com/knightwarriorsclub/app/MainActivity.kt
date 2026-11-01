@@ -5,7 +5,10 @@ import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +38,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.BackgroundStore
 import com.knightwarriorsclub.app.data.CallController
 import com.knightwarriorsclub.app.data.CallPhase
 import com.knightwarriorsclub.app.data.ClubApi
@@ -56,6 +61,10 @@ import kotlinx.coroutines.launch
  * inbox refresh) + native 1-to-1 voice/video calls wire-compatible with
  * the website (earpiece routing included). Ring-when-closed (Firebase)
  * and chat bubbles land in Phase 3.1 after the Firebase setup session.
+ * v0.3.1 (Pranto's running-app feedback round): Messenger-style inbox
+ * (conversations only + pinned Everyone Club Room + new-chat picker),
+ * "@null" parsing fix, personal phone-only background, real crest in the
+ * header, no JOIN button in-app, and a static About the Club page.
  */
 
 val Gold = Color(0xFFD4A017)
@@ -74,6 +83,7 @@ enum class Tab(val label: String, val icon: ImageVector) {
 private sealed interface Screen {
     data object Tabs : Screen
     data object Inbox : Screen
+    data object Everyone : Screen
     data class Chat(val partner: Member) : Screen
 }
 
@@ -143,6 +153,7 @@ fun ClubApp(
         }
     }
     BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Everyone) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
     BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
@@ -176,13 +187,36 @@ fun ClubApp(
     DisposableEffect(realtime) { onDispose { realtime?.disconnect() } }
     DisposableEffect(callController) { onDispose { callController?.stop() } }
 
+    // Personal background (Pranto): club artwork by default; a member's own
+    // picked picture replaces it on THIS phone only (BackgroundStore).
+    var bgVersion by remember { mutableStateOf(0) }
+    val customBg = remember(bgVersion) { BackgroundStore.loadBitmap(appContext) }
+    val bgPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                if (BackgroundStore.saveFromUri(appContext, uri)) bgVersion++
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(Ink)) {
-        Image(
-            painter = painterResource(R.drawable.bg_home),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize()
-        )
+        if (customBg != null) {
+            Image(
+                bitmap = customBg.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            Image(
+                painter = painterResource(R.drawable.bg_home),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
         Box(Modifier.fillMaxSize().background(Color(0x59060B14))) // navy veil for contrast
 
         when {
@@ -254,7 +288,12 @@ fun ClubApp(
                             session = s, me = myProfile ?: return@Column,
                             realtime = realtime,
                             onOpenChat = { screen = Screen.Chat(it) },
+                            onOpenEveryone = { screen = Screen.Everyone },
                             onBack = { screen = Screen.Tabs }
+                        )
+                        is Screen.Everyone -> EveryoneScreen(
+                            session = s,
+                            onBack = { screen = Screen.Inbox }
                         )
                         is Screen.Tabs -> {
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
@@ -265,6 +304,18 @@ fun ClubApp(
                                     Tab.Events -> EventsScreen()
                                     Tab.More -> MorePanel(
                                         me = myProfile,
+                                        hasCustomBg = customBg != null,
+                                        onPickBackground = {
+                                            bgPicker.launch(
+                                                PickVisualMediaRequest(
+                                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                )
+                                            )
+                                        },
+                                        onResetBackground = {
+                                            BackgroundStore.clear(appContext)
+                                            bgVersion++
+                                        },
                                         onLogout = {
                                             store.clear()
                                             session = null
@@ -297,11 +348,14 @@ private fun ClubHeader(unreadTotal: Int, onEnvelopeClick: () -> Unit) {
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(
-            Modifier.size(44.dp).clip(CircleShape)
-                .background(Color(0xB3141E30)).border(1.5.dp, Gold, CircleShape),
-            contentAlignment = Alignment.Center
-        ) { Text("♞", color = GoldLight, fontSize = 24.sp) }
+        // the real club crest, round beside the club name (Pranto, 2026-11-01)
+        Image(
+            painter = painterResource(R.drawable.club_logo),
+            contentDescription = "Knight Warriors Club logo",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.size(44.dp).clip(CircleShape)
+                .border(1.5.dp, Gold, CircleShape)
+        )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text("KNIGHT WARRIORS CLUB", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -363,17 +417,12 @@ private fun HomeScreen() {
                 Spacer(Modifier.height(6.dp))
                 Text("Play together. Rise together.", color = Color(0xFFFFF4E4), fontSize = 13.sp)
                 Spacer(Modifier.height(14.dp))
-                Row {
-                    Box(
-                        Modifier.clip(RoundedCornerShape(14.dp)).background(Gold)
-                            .padding(horizontal = 16.dp, vertical = 9.dp)
-                    ) { Text("JOIN THE CLUB", color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                    Spacer(Modifier.width(10.dp))
-                    Box(
-                        Modifier.clip(RoundedCornerShape(14.dp)).border(1.5.dp, Color.White, RoundedCornerShape(14.dp))
-                            .padding(horizontal = 16.dp, vertical = 9.dp)
-                    ) { Text("TOURNAMENTS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
-                }
+                // no JOIN button in-app (Pranto, 2026-11-01): anyone who
+                // reaches Home is already a signed-in member
+                Box(
+                    Modifier.clip(RoundedCornerShape(14.dp)).border(1.5.dp, Color.White, RoundedCornerShape(14.dp))
+                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                ) { Text("TOURNAMENTS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
         }
         item {
@@ -478,7 +527,25 @@ private fun EventsScreen() {
 }
 
 @Composable
-private fun MorePanel(me: Member?, onLogout: () -> Unit) {
+private fun MorePanel(
+    me: Member?,
+    hasCustomBg: Boolean,
+    onPickBackground: () -> Unit,
+    onResetBackground: () -> Unit,
+    onLogout: () -> Unit
+) {
+    var section by remember { mutableStateOf<String?>(null) }
+    BackHandler(enabled = section != null) { section = null }
+    when (section) {
+        "About the Club" -> {
+            AboutScreen { section = null }
+            return
+        }
+        "Settings" -> {
+            SettingsScreen(hasCustomBg, onPickBackground, onResetBackground) { section = null }
+            return
+        }
+    }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -512,7 +579,9 @@ private fun MorePanel(me: Member?, onLogout: () -> Unit) {
             "Settings" to "Sounds, vibration, app lock"
         ).forEach { (t, s) ->
             item {
-                GlassCard(Modifier.fillMaxWidth()) {
+                GlassCard(Modifier.fillMaxWidth().clickable {
+                    if (t == "About the Club" || t == "Settings") section = t
+                }) {
                     Text(t, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
                 }
