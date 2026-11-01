@@ -1,5 +1,6 @@
 package com.knightwarriorsclub.app
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -59,17 +60,25 @@ fun InitialAvatar(name: String, size: Int = 44) {
 // ── Login ────────────────────────────────────────────────────────────────
 
 @Composable
-fun LoginScreen(busy: Boolean, error: String?, onSignIn: (String, String) -> Unit) {
+fun LoginScreen(
+    busy: Boolean, error: String?,
+    onSignIn: (String, String) -> Unit,
+    onRegister: () -> Unit,
+    onForgot: () -> Unit
+) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         GlassCard(Modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
-            Box(
-                Modifier.size(58.dp).clip(CircleShape)
-                    .background(Color(0xB3141E30)).border(1.5.dp, Gold, CircleShape)
-                    .align(Alignment.CenterHorizontally),
-                contentAlignment = Alignment.Center
-            ) { Text("♞", color = GoldLight, fontSize = 30.sp) }
+            // the real club crest, big — Pranto's feedback, 2026-11-01
+            Image(
+                painter = androidx.compose.ui.res.painterResource(R.drawable.club_logo),
+                contentDescription = "Knight Warriors Club logo",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(110.dp).clip(RoundedCornerShape(20.dp))
+                    .border(1.5.dp, Gold, RoundedCornerShape(20.dp))
+                    .align(Alignment.CenterHorizontally)
+            )
             Spacer(Modifier.height(10.dp))
             Text(
                 "KNIGHT WARRIORS CLUB", color = GoldLight, fontWeight = FontWeight.Bold,
@@ -81,48 +90,40 @@ fun LoginScreen(busy: Boolean, error: String?, onSignIn: (String, String) -> Uni
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
             Spacer(Modifier.height(16.dp))
-            OutlinedTextField(
-                value = email, onValueChange = { email = it },
-                label = { Text("Email") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                    focusedLabelColor = GoldLight, unfocusedLabelColor = Color(0xFFC4CEDC),
-                    focusedBorderColor = Gold, unfocusedBorderColor = GlassRim,
-                    cursorColor = GoldLight
-                )
+            ClubTextField(
+                "Email", email, { email = it },
+                keyboardType = KeyboardType.Email, placeholder = "you@example.com"
             )
             Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = password, onValueChange = { password = it },
-                label = { Text("Password") }, singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                    focusedLabelColor = GoldLight, unfocusedLabelColor = Color(0xFFC4CEDC),
-                    focusedBorderColor = Gold, unfocusedBorderColor = GlassRim,
-                    cursorColor = GoldLight
+            PasswordField("Password", password, { password = it })
+            Box(Modifier.fillMaxWidth()) {
+                Text(
+                    "Forgot password?", color = GoldLight, fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                        .clickable { onForgot() }
+                        .padding(vertical = 6.dp)
                 )
-            )
+            }
             if (error != null) {
-                Spacer(Modifier.height(10.dp))
+                Spacer(Modifier.height(4.dp))
                 Text(error, color = Color(0xFFFF9B9B), fontSize = 12.sp)
             }
-            Spacer(Modifier.height(16.dp))
-            Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Gold)
-                    .clickable(enabled = !busy && email.isNotBlank() && password.isNotBlank()) {
-                        onSignIn(email.trim(), password)
-                    }
-                    .padding(vertical = 13.dp),
-                contentAlignment = Alignment.Center
+            Spacer(Modifier.height(10.dp))
+            GoldButton(
+                if (busy) "SIGNING IN…" else "SIGN IN",
+                enabled = !busy && email.isNotBlank() && password.isNotBlank()
+            ) { onSignIn(email.trim(), password) }
+            Spacer(Modifier.height(12.dp))
+            Row(
+                Modifier.align(Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text("New to the club? ", color = Color(0xFFC4CEDC), fontSize = 12.sp)
                 Text(
-                    if (busy) "SIGNING IN…" else "SIGN IN",
-                    color = Ink, fontWeight = FontWeight.Bold, fontSize = 14.sp
+                    "Register here", color = GoldLight, fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { onRegister() }
                 )
             }
         }

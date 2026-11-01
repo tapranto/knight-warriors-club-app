@@ -5,8 +5,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -110,6 +114,142 @@ object ClubApi {
             if (code !in 200..299) throw IllegalStateException("Session expired")
             parseSession(body, "")
         }
+    }
+
+    /** The three ways a sign-up can end — the same outcomes the website handles. */
+    sealed interface SignUpOutcome {
+        /** Email confirmation is on: account created, no session yet. */
+        data object CheckEmail : SignUpOutcome
+        /** The email already has an account (Supabase returns a user with no identities). */
+        data object AlreadyRegistered : SignUpOutcome
+        /** A session came back immediately — profile rows can be written now. */
+        data class SignedIn(val session: Session) : SignUpOutcome
+    }
+
+    /**
+     * Register a new member. The profile details ride in the auth metadata
+     * as `kwc_profile` — exactly like the website — and [ensureMember]
+     * turns them into member rows at the first sign-in.
+     */
+    suspend fun signUp(email: String, password: String, profile: JsonObject): Result<SignUpOutcome> {
+        val url = ClubConfig.SUPABASE_URL + "/auth/v1/signup"
+        val payload = buildJsonObject {
+            put("email", email); put("password", password)
+            put("data", buildJsonObject { put("kwc_profile", profile) })
+        }
+        val req = baseHeaders().url(url)
+            .post(payload.toString().toRequestBody(JSON_MEDIA)).build()
+        return runCatching {
+            val (code, body) = execute(req)
+            val obj = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+            if (code !in 200..299) {
+                val msg = obj?.get("msg")?.jsonPrimitive?.contentOrNull
+                    ?: obj?.get("message")?.jsonPrimitive?.contentOrNull
+                    ?: "Registration failed ($code)"
+                throw IllegalStateException(msg)
+            }
+            val o = obj ?: throw IllegalStateException("Registration failed")
+            if (o.containsKey("access_token")) {
+                return@runCatching SignUpOutcome.SignedIn(parseSession(body, email))
+            }
+            val identities = o["identities"] as? JsonArray
+            if (identities != null && identities.isEmpty()) {
+                return@runCatching SignUpOutcome.AlreadyRegistered
+            }
+            SignUpOutcome.CheckEmail
+        }
+    }
+
+    /** Send the password-reset email (the link opens the website's set-new-password page). */
+    suspend fun recover(email: String): Result<Unit> {
+        val url = ClubConfig.SUPABASE_URL + "/auth/v1/recover"
+        val payload = buildJsonObject { put("email", email) }
+        val req = baseHeaders().url(url)
+            .post(payload.toString().toRequestBody(JSON_MEDIA)).build()
+        return runCatching {
+            val (code, body) = execute(req)
+            if (code !in 200..299) {
+                val msg = runCatching {
+                    json.parseToJsonElement(body).jsonObject["msg"]?.jsonPrimitive?.contentOrNull
+                }.getOrNull() ?: "Could not send the reset email ($code)"
+                throw IllegalStateException(msg)
+            }
+            Unit
+        }
+    }
+
+    private suspend fun restPost(
+        session: Session, path: String, payload: String, prefer: String = "return=minimal"
+    ): Pair<Int, String> {
+        val url = (ClubConfig.SUPABASE_URL + path).toHttpUrl()
+        val req = baseHeaders(session.accessToken).url(url)
+            .addHeader("Prefer", prefer)
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        return execute(req)
+    }
+
+    /** The signed-in user's auth record (carries the registration metadata). */
+    private suspend fun authUser(session: Session): JsonObject? {
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/auth/v1/user").get().build()
+        val (code, body) = execute(req)
+        if (code !in 200..299) return null
+        return runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+    }
+
+    /**
+     * The website creates a new member's profile rows at first login from
+     * the registration data in the auth metadata (its ensureProfile). The
+     * app does the same, so an account registered on either door gets its
+     * rows whichever door it first signs in through.
+     */
+    suspend fun ensureMember(session: Session): Member? {
+        myMember(session)?.let { return it }
+        return runCatching {
+            val user = authUser(session) ?: return@runCatching myMember(session)
+            val profile = user["user_metadata"]?.jsonObject?.get("kwc_profile")?.jsonObject
+                ?: return@runCatching null
+            val fullName = profile["full_name"]?.jsonPrimitive?.contentOrNull
+            if (fullName.isNullOrBlank()) return@runCatching null
+            val memberPayload = buildJsonObject {
+                put("auth_user_id", session.authUserId)
+                put("full_name", fullName)
+                put("facebook_id", profile["facebook_id"]?.jsonPrimitive?.contentOrNull ?: "")
+            }
+            val (mCode, mBody) = restPost(
+                session, "/rest/v1/members", memberPayload.toString(), "return=representation"
+            )
+            if (mCode !in 200..299) return@runCatching myMember(session)
+            val memberId = json.parseToJsonElement(mBody).jsonArray.firstOrNull()
+                ?.jsonObject?.get("id")?.jsonPrimitive?.long
+                ?: return@runCatching myMember(session)
+            val dob = profile["dob"]?.jsonPrimitive?.contentOrNull
+            val gender = profile["gender"]?.jsonPrimitive?.contentOrNull
+            val privPayload = buildJsonObject {
+                put("member_id", memberId)
+                put("phone", profile["phone"]?.jsonPrimitive?.contentOrNull ?: "")
+                put("email", session.email)
+                if (dob.isNullOrBlank()) put("date_of_birth", JsonNull) else put("date_of_birth", dob)
+                if (gender.isNullOrBlank()) put("gender", JsonNull) else put("gender", gender)
+            }
+            restPost(session, "/rest/v1/member_private", privPayload.toString())
+            val games = profile["games"] as? JsonArray
+            if (games != null && games.isNotEmpty()) {
+                val rows = buildJsonArray {
+                    games.forEach { g ->
+                        val gameName = (g as? JsonPrimitive)?.contentOrNull ?: return@forEach
+                        add(buildJsonObject {
+                            put("member_id", memberId)
+                            put("game", gameName)
+                            put("uid", JsonNull)
+                            put("team_strength", JsonNull)
+                        })
+                    }
+                }
+                if (rows.isNotEmpty()) restPost(session, "/rest/v1/member_games", rows.toString())
+            }
+            myMember(session)
+        }.getOrNull()
     }
 
     private suspend fun restGet(session: Session, path: String, params: Map<String, String>): JsonArray {

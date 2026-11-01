@@ -1,7 +1,10 @@
 package com.knightwarriorsclub.app
 
+import android.app.Activity
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -26,6 +29,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -42,6 +46,9 @@ import kotlinx.coroutines.launch
  * the Home lantern-forest, Pranto's rule 2026-11-01).
  * Phase 2: real Supabase sign-in + inbox + DM chat against the SAME
  * database as knightwarriorsclub.com.
+ * Phase 2.1 (Pranto's feedback batch): register (website-identical form),
+ * forgot password, real club logo on the sign-in card, password eye
+ * toggles, and Rule 1 — double-tap Back to exit.
  */
 
 val Gold = Color(0xFFD4A017)
@@ -82,6 +89,8 @@ fun ClubApp(store: SessionStore) {
     var loginBusy by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
     var unreadTotal by remember { mutableStateOf(0) }
+    var authView by remember { mutableStateOf("login") }
+    var registeredEmail by remember { mutableStateOf("") }
 
     // restore a saved session on launch (sign in once per device)
     LaunchedEffect(Unit) {
@@ -90,11 +99,28 @@ fun ClubApp(store: SessionStore) {
             ClubApi.refresh(rt).onSuccess { s ->
                 session = s
                 store.save(s)
-                me = runCatching { ClubApi.myMember(s) }.getOrNull()
+                me = runCatching { ClubApi.ensureMember(s) }.getOrNull()
             }.onFailure { store.clear() }
         }
         checking = false
     }
+
+    // Back behaviour — Rule 1 (Pranto): at the root, Back asks once
+    // ("press back again to exit") and only a quick second press exits.
+    val context = LocalContext.current
+    var lastBackAt by remember { mutableStateOf(0L) }
+    BackHandler(enabled = session != null && screen is Screen.Tabs) {
+        val now = System.currentTimeMillis()
+        if (now - lastBackAt < 2000) {
+            (context as? Activity)?.finish()
+        } else {
+            lastBackAt = now
+            Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+        }
+    }
+    BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
+    BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
     // envelope badge = real unread DMs, refreshed when back on the tabs
     LaunchedEffect(session, me, screen) {
@@ -122,24 +148,50 @@ fun ClubApp(store: SessionStore) {
                 }
             }
             session == null -> {
-                LoginScreen(busy = loginBusy, error = loginError) { email, password ->
-                    loginBusy = true
-                    loginError = null
-                    scope.launch {
-                        ClubApi.signIn(email, password)
-                            .onSuccess { s ->
-                                session = s
-                                store.save(s)
-                                me = runCatching { ClubApi.myMember(s) }.getOrNull()
-                                if (me == null) {
-                                    loginError = "Signed in, but no member profile was found for this account."
-                                    session = null
-                                    store.clear()
-                                }
+                when (authView) {
+                    "register" -> RegisterScreen(
+                        onBack = { authView = "login" },
+                        onCheckEmail = { email ->
+                            registeredEmail = email
+                            authView = "checkemail"
+                        },
+                        onSignedIn = { s ->
+                            session = s
+                            store.save(s)
+                            scope.launch {
+                                me = runCatching { ClubApi.ensureMember(s) }.getOrNull()
                             }
-                            .onFailure { loginError = it.message ?: "Sign-in failed" }
-                        loginBusy = false
-                    }
+                        }
+                    )
+                    "forgot" -> ForgotPasswordScreen(onBack = { authView = "login" })
+                    "checkemail" -> CheckEmailScreen(
+                        email = registeredEmail,
+                        onBack = { authView = "login" }
+                    )
+                    else -> LoginScreen(
+                        busy = loginBusy, error = loginError,
+                        onSignIn = { email, password ->
+                            loginBusy = true
+                            loginError = null
+                            scope.launch {
+                                ClubApi.signIn(email, password)
+                                    .onSuccess { s ->
+                                        session = s
+                                        store.save(s)
+                                        me = runCatching { ClubApi.ensureMember(s) }.getOrNull()
+                                        if (me == null) {
+                                            loginError = "Signed in, but no member profile was found for this account."
+                                            session = null
+                                            store.clear()
+                                        }
+                                    }
+                                    .onFailure { loginError = it.message ?: "Sign-in failed" }
+                                loginBusy = false
+                            }
+                        },
+                        onRegister = { loginError = null; authView = "register" },
+                        onForgot = { loginError = null; authView = "forgot" }
+                    )
                 }
             }
             else -> {
@@ -172,6 +224,7 @@ fun ClubApp(store: SessionStore) {
                                             me = null
                                             screen = Screen.Tabs
                                             tab = Tab.Home
+                                            authView = "login"
                                         }
                                     )
                                 }
