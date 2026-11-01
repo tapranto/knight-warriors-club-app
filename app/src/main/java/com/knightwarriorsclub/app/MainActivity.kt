@@ -34,8 +34,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.CallController
+import com.knightwarriorsclub.app.data.CallPhase
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Member
+import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
 import com.knightwarriorsclub.app.data.SessionStore
 import kotlinx.coroutines.launch
@@ -49,6 +52,10 @@ import kotlinx.coroutines.launch
  * Phase 2.1 (Pranto's feedback batch): register (website-identical form),
  * forgot password, real club logo on the sign-in card, password eye
  * toggles, and Rule 1 — double-tap Back to exit.
+ * Phase 3: live chat over Supabase Realtime (typing indicators, instant
+ * inbox refresh) + native 1-to-1 voice/video calls wire-compatible with
+ * the website (earpiece routing included). Ring-when-closed (Firebase)
+ * and chat bubbles land in Phase 3.1 after the Firebase setup session.
  */
 
 val Gold = Color(0xFFD4A017)
@@ -71,15 +78,32 @@ private sealed interface Screen {
 }
 
 class MainActivity : ComponentActivity() {
+    private var pendingPermCallback: ((Boolean) -> Unit)? = null
+    private val permLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { result ->
+        val granted = result.values.all { it }
+        pendingPermCallback?.invoke(granted)
+        pendingPermCallback = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val store = SessionStore(this)
-        setContent { ClubApp(store) }
+        setContent {
+            ClubApp(store, requestPermissions = { perms, cb ->
+                pendingPermCallback = cb
+                permLauncher.launch(perms)
+            })
+        }
     }
 }
 
 @Composable
-fun ClubApp(store: SessionStore) {
+fun ClubApp(
+    store: SessionStore,
+    requestPermissions: (Array<String>, (Boolean) -> Unit) -> Unit
+) {
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(true) }
     var session by remember { mutableStateOf<Session?>(null) }
@@ -131,6 +155,26 @@ fun ClubApp(store: SessionStore) {
             }.getOrDefault(0)
         }
     }
+
+    // Phase 3: one realtime socket + one call controller per signed-in member
+    val appContext = LocalContext.current.applicationContext
+    val realtime = remember(session, me) {
+        val s = session; val m = me
+        if (s != null && m != null) {
+            RealtimeClient().also { it.connect(s.accessToken) }
+        } else null
+    }
+    val callController = remember(session, me, realtime) {
+        val s = session; val m = me; val rt = realtime
+        if (s != null && m != null && rt != null) {
+            CallController(appContext).also { ctrl ->
+                ctrl.permissionRequester = requestPermissions
+                ctrl.start(s, m, rt, scope)
+            }
+        } else null
+    }
+    DisposableEffect(realtime) { onDispose { realtime?.disconnect() } }
+    DisposableEffect(callController) { onDispose { callController?.stop() } }
 
     Box(Modifier.fillMaxSize().background(Ink)) {
         Image(
@@ -202,10 +246,13 @@ fun ClubApp(store: SessionStore) {
                         is Screen.Chat -> ChatScreen(
                             session = s, me = myProfile ?: return@Column,
                             partner = scr.partner,
+                            realtime = realtime,
+                            onCall = { p, k -> callController?.startCall(p, k) },
                             onBack = { screen = Screen.Inbox }
                         )
                         is Screen.Inbox -> InboxScreen(
                             session = s, me = myProfile ?: return@Column,
+                            realtime = realtime,
                             onOpenChat = { screen = Screen.Chat(it) },
                             onBack = { screen = Screen.Tabs }
                         )
@@ -234,6 +281,12 @@ fun ClubApp(store: SessionStore) {
                     }
                 }
             }
+        }
+
+        // the call overlay floats above everything while a call is active
+        val cc = callController
+        if (cc != null && cc.uiState.phase != CallPhase.IDLE) {
+            CallOverlay(cc)
         }
     }
 }

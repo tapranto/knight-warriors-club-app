@@ -15,6 +15,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,9 +31,17 @@ import androidx.compose.ui.unit.sp
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Dm
 import com.knightwarriorsclub.app.data.Member
+import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -43,6 +53,17 @@ private val TimeFmt: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")
 fun fmtTime(iso: String): String = runCatching {
     OffsetDateTime.parse(iso).atZoneSameInstant(DhakaZone).format(TimeFmt)
 }.getOrDefault("")
+
+/** A direct_messages row arriving over Realtime, mapped like the REST rows. */
+fun recordToDm(o: JsonObject): Dm? = runCatching {
+    Dm(
+        id = o["id"]!!.jsonPrimitive.long,
+        senderId = o["sender_member_id"]!!.jsonPrimitive.long,
+        recipientId = o["recipient_member_id"]!!.jsonPrimitive.long,
+        body = o["body"]?.jsonPrimitive?.contentOrNull ?: "",
+        createdAt = o["created_at"]!!.jsonPrimitive.content
+    )
+}.getOrNull()
 
 @Composable
 fun InitialAvatar(name: String, size: Int = 44) {
@@ -135,14 +156,24 @@ fun LoginScreen(
 @Composable
 fun InboxScreen(
     session: Session, me: Member,
+    realtime: RealtimeClient? = null,
     onOpenChat: (Member) -> Unit, onBack: () -> Unit
 ) {
     var members by remember { mutableStateOf<List<Member>>(emptyList()) }
     var unread by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var latest by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var loaded by remember { mutableStateOf(false) }
+    var refreshTick by remember { mutableStateOf(0) }
 
-    LaunchedEffect(me.id) {
+    // live refresh: any new DM anywhere bumps the tick and reloads the list
+    DisposableEffect(me.id) {
+        val rt = realtime
+        val channel = "app-inbox-${me.id}"
+        rt?.joinInserts(channel, "direct_messages") { refreshTick++ }
+        onDispose { rt?.leave(channel) }
+    }
+
+    LaunchedEffect(me.id, refreshTick) {
         runCatching {
             members = ClubApi.allMembers(session).filter { it.id != me.id }
             unread = ClubApi.unreadCounts(session, me.id)
@@ -213,6 +244,8 @@ fun InboxScreen(
 @Composable
 fun ChatScreen(
     session: Session, me: Member, partner: Member,
+    realtime: RealtimeClient? = null,
+    onCall: (Member, String) -> Unit = { _, _ -> },
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -221,7 +254,13 @@ fun ChatScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var hasMore by remember { mutableStateOf(false) }
     var loadingOlder by remember { mutableStateOf(false) }
+    var partnerTypingUntil by remember { mutableStateOf(0L) }
+    var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
+    var lastTypingSent by remember { mutableStateOf(0L) }
     val listState = rememberLazyListState()
+
+    val insertsChannel = "app-chat-${me.id}-${partner.id}"
+    val typingChannel = "kwc-chat-${minOf(me.id, partner.id)}-${maxOf(me.id, partner.id)}"
 
     suspend fun loadLatest() {
         val page = ClubApi.threadPage(session, me.id, partner.id)
@@ -239,14 +278,68 @@ fun ChatScreen(
         }
     }
 
+    // Phase 3: messages arrive live over Realtime; a slow poll is the net
+    DisposableEffect(partner.id) {
+        val rt = realtime
+        rt?.joinInserts(insertsChannel, "direct_messages") { record ->
+            val dm = recordToDm(record) ?: return@joinInserts
+            val pairMatches = (dm.senderId == me.id && dm.recipientId == partner.id) ||
+                    (dm.senderId == partner.id && dm.recipientId == me.id)
+            if (!pairMatches) return@joinInserts
+            if (messages.none { it.id == dm.id }) {
+                val wasAtBottom = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ==
+                        (messages.size - 1)
+                messages = messages + dm
+                if (wasAtBottom) {
+                    scope.launch { listState.animateScrollToItem(messages.size - 1) }
+                }
+            }
+            if (dm.senderId == partner.id) {
+                scope.launch { ClubApi.markRead(session, me.id, partner.id) }
+            }
+        }
+        rt?.joinBroadcast(typingChannel, { event, payload ->
+            if (event == "typing" &&
+                payload["from"]?.jsonPrimitive?.longOrNull == partner.id
+            ) {
+                partnerTypingUntil = System.currentTimeMillis() + 4000
+            }
+        })
+        onDispose {
+            rt?.leave(insertsChannel)
+            rt?.leave(typingChannel)
+        }
+    }
+
     LaunchedEffect(partner.id) {
         runCatching { loadLatest() }
         ClubApi.markRead(session, me.id, partner.id)
-        // gentle refresh while the thread is open (true realtime push = Phase 3)
         while (true) {
-            delay(5000)
+            delay(30000)
             runCatching { loadLatest() }
             ClubApi.markRead(session, me.id, partner.id)
+        }
+    }
+
+    // 1-second ticker for the typing indicator's expiry
+    LaunchedEffect(partner.id) {
+        while (true) {
+            delay(1000)
+            nowTick = System.currentTimeMillis()
+        }
+    }
+
+    // tell the partner we're typing (throttled, app-to-app for now)
+    LaunchedEffect(input) {
+        if (input.isNotBlank()) {
+            val now = System.currentTimeMillis()
+            if (now - lastTypingSent > 3000) {
+                lastTypingSent = now
+                realtime?.broadcast(
+                    typingChannel, "typing",
+                    buildJsonObject { put("from", me.id) }
+                )
+            }
         }
     }
 
@@ -293,6 +386,18 @@ fun ChatScreen(
                     color = Color(0xFFC4CEDC), fontSize = 11.sp
                 )
             }
+            Spacer(Modifier.weight(1f))
+            Icon(
+                Icons.Filled.Call, contentDescription = "Voice call",
+                tint = GoldLight,
+                modifier = Modifier.size(24.dp).clickable { onCall(partner, "voice") }
+            )
+            Spacer(Modifier.width(16.dp))
+            Icon(
+                Icons.Filled.Videocam, contentDescription = "Video call",
+                tint = GoldLight,
+                modifier = Modifier.size(26.dp).clickable { onCall(partner, "video") }
+            )
         }
 
         LazyColumn(
@@ -338,6 +443,14 @@ fun ChatScreen(
             Text(
                 error!!, color = Color(0xFFFF9B9B), fontSize = 12.sp,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+
+        if (partnerTypingUntil > nowTick) {
+            Text(
+                "${partner.fullName.split(" ").firstOrNull() ?: "Partner"} is typing…",
+                color = Color(0xFFC4CEDC), fontSize = 11.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp)
             )
         }
 

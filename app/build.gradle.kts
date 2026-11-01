@@ -13,8 +13,8 @@ android {
         applicationId = "com.knightwarriorsclub.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.2.1-beta1"
+        versionCode = 4
+        versionName = "0.3.0-beta1"
     }
 
     buildTypes {
@@ -45,4 +45,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // Phase 3: WebRTC media for 1-to-1 calls (signalling rides RealtimeClient)
+    implementation("io.github.webrtc-sdk:android:125.6422.07")
 }
