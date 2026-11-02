@@ -40,7 +40,31 @@ fun WebPageView(url: String, modifier: Modifier = Modifier) {
                     settings.domStorageEnabled = true
                     settings.loadWithOverviewMode = true
                     settings.useWideViewPort = true
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            // Inside the app, the website's own top header
+                            // (logo + nav) duplicates the app's header and
+                            // tab bar — hide it and reclaim its space
+                            // (Pranto, 2026-11-02). The style element lives
+                            // in the page, so it survives the site's in-page
+                            // view swaps.
+                            view?.evaluateJavascript(
+                                """
+                                (function () {
+                                  var s = document.getElementById('kwc-app-style');
+                                  if (!s) {
+                                    s = document.createElement('style');
+                                    s.id = 'kwc-app-style';
+                                    document.head.appendChild(s);
+                                  }
+                                  s.textContent = '.site-head{display:none !important}' +
+                                    'main{padding-top:12px !important}';
+                                })();
+                                """.trimIndent(),
+                                null
+                            )
+                        }
+                    }
                     webChromeClient = object : WebChromeClient() {
                         override fun onProgressChanged(view: WebView?, newProgress: Int) {
                             progress = newProgress
