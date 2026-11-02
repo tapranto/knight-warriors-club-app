@@ -111,10 +111,26 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val store = SessionStore(this)
         setContent {
-            ClubApp(store, requestPermissions = { perms, cb ->
-                pendingPermCallback = cb
-                permLauncher.launch(perms)
-            })
+            // Dark club theme for ALL Material components (dialogs, menus,
+            // switches): without it, popups render stock light-purple —
+            // Pranto's "this popup looks boring" report, 2026-11-02.
+            MaterialTheme(
+                colorScheme = darkColorScheme(
+                    primary = Gold,
+                    secondary = GoldLight,
+                    background = Ink,
+                    surface = Color(0xFF141E30),
+                    surfaceVariant = Color(0xFF1B2942),
+                    onBackground = Color.White,
+                    onSurface = Color.White,
+                    onSurfaceVariant = Color(0xFFC4CEDC)
+                )
+            ) {
+                ClubApp(store, requestPermissions = { perms, cb ->
+                    pendingPermCallback = cb
+                    permLauncher.launch(perms)
+                })
+            }
         }
     }
 }

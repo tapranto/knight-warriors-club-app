@@ -17,9 +17,13 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.ui.window.Dialog
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -74,6 +78,26 @@ fun recordToDm(o: JsonObject): Dm? = runCatching {
         createdAt = o["created_at"]!!.jsonPrimitive.content
     )
 }.getOrNull()
+
+/** One action row in the club-styled popup menus (icon + label). */
+@Composable
+fun MenuActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    tint: Color,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 10.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(21.dp))
+        Spacer(Modifier.width(14.dp))
+        Text(label, color = tint, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+    }
+}
 
 /** One row of the merged inbox list: a DM chat or a squad chat (v0.4.0). */
 private sealed interface InboxRow {
@@ -445,37 +469,60 @@ fun InboxScreen(
                 }
             }
         }
-        // long-press a conversation → options (Pranto's Point 4, 2026-11-02)
+        // long-press a conversation → options (Pranto's Point 4, 2026-11-02),
+        // as a club-styled glass sheet, not the stock popup (2026-11-02)
         menuPartner?.let { p ->
-            AlertDialog(
-                onDismissRequest = { menuPartner = null },
-                title = { Text(ChatPrefs.displayName(context, p)) },
-                text = {
-                    Column {
-                        TextButton(onClick = {
-                            menuPartner = null
-                            onOpenProfile(p)
-                        }) { Text("View profile") }
-                        TextButton(onClick = {
-                            menuPartner = null
+            Dialog(onDismissRequest = { menuPartner = null }) {
+                Column(
+                    Modifier.clip(RoundedCornerShape(24.dp))
+                        .background(Color(0xF0141E30))
+                        .border(1.dp, GlassRim, RoundedCornerShape(24.dp))
+                        .padding(18.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AvatarImage(url = p.avatarUrl, name = p.fullName, size = 48)
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(
+                                ChatPrefs.displayName(context, p),
+                                color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp
+                            )
+                            Text(
+                                p.username?.let { "@$it" } ?: "Knight Warriors member",
+                                color = Color(0xFFC4CEDC), fontSize = 11.sp
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    MenuActionRow(Icons.Filled.Person, "View profile", Color.White) {
+                        menuPartner = null
+                        onOpenProfile(p)
+                    }
+                    MenuActionRow(Icons.Filled.Delete, "Delete chat", Color(0xFFFF9B9B)) {
+                        menuPartner = null
+                        ChatPrefs.hideChat(context, p.id)
+                        refreshTick++
+                    }
+                    MenuActionRow(Icons.Filled.Block, "Block member", Color(0xFFFF9B9B)) {
+                        menuPartner = null
+                        scope.launch {
+                            ClubApi.blockMember(session, me.id, p.id)
                             ChatPrefs.hideChat(context, p.id)
                             refreshTick++
-                        }) { Text("Delete chat") }
-                        TextButton(onClick = {
-                            menuPartner = null
-                            scope.launch {
-                                ClubApi.blockMember(session, me.id, p.id)
-                                ChatPrefs.hideChat(context, p.id)
-                                refreshTick++
-                            }
-                        }) { Text("Block member") }
+                        }
                     }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(onClick = { menuPartner = null }) { Text("Cancel") }
+                    Spacer(Modifier.height(10.dp))
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .border(1.dp, Gold, RoundedCornerShape(14.dp))
+                            .clickable { menuPartner = null }
+                            .padding(vertical = 11.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("CANCEL", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 }
-            )
+            }
         }
         // ✎ new chat — Messenger-style compose button
         Box(
