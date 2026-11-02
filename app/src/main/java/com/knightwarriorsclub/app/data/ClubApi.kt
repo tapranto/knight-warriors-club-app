@@ -382,9 +382,9 @@ object ClubApi {
     suspend fun updateMemberProfile(
         session: Session, memberId: Long, fields: Map<String, JsonElement>
     ): Result<Unit> = runCatching {
+        val payload = buildJsonObject { fields.forEach { (k, v) -> put(k, v) } }
         val (code, _) = restPatch(
-            session, "/rest/v1/members", "id=eq.$memberId",
-            buildJsonObject { fields.forEach { (k, v) -> put(k, v) } }
+            session, "/rest/v1/members", mapOf("id" to "eq.$memberId"), payload.toString()
         )
         check(code in 200..299) { "profile update failed (HTTP $code)" }
     }
@@ -393,17 +393,17 @@ object ClubApi {
     suspend fun updateMemberGame(
         session: Session, memberId: Long, game: String, uid: String?, strength: Int?
     ): Result<Unit> = runCatching {
-        val filter = "member_id=eq.$memberId&game=eq." +
-                java.net.URLEncoder.encode(game, "UTF-8").replace("+", "%20")
+        val payload = buildJsonObject {
+            put("uid", uid?.takeIf { it.isNotBlank() }?.let { JsonPrimitive(it) } ?: JsonNull)
+            put(
+                "team_strength",
+                strength?.let { JsonPrimitive(it) } ?: JsonNull
+            )
+        }
         val (code, _) = restPatch(
-            session, "/rest/v1/member_games", filter,
-            buildJsonObject {
-                put("uid", uid?.takeIf { it.isNotBlank() }?.let { JsonPrimitive(it) } ?: JsonNull)
-                put(
-                    "team_strength",
-                    strength?.let { JsonPrimitive(it) } ?: JsonNull
-                )
-            }
+            session, "/rest/v1/member_games",
+            mapOf("member_id" to "eq.$memberId", "game" to "eq.$game"),
+            payload.toString()
         )
         check(code in 200..299) { "game update failed (HTTP $code)" }
     }

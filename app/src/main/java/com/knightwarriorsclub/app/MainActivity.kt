@@ -356,23 +356,22 @@ fun ClubApp(
                                 }
                             }
                         )
-                        is Screen.ProfileEdit -> EditProfileScreen(
-                            session = s, me = myProfile ?: return@Column,
-                            onBack = {
-                                screen = Screen.Profile(
-                                    (myProfile ?: return@Column).id, Screen.Tabs
-                                )
-                            },
-                            onSaved = {
-                                scope.launch {
-                                    me = runCatching { ClubApi.ensureMember(s) }.getOrNull() ?: me
-                                    val mid = me?.id
-                                    screen = if (mid != null) {
-                                        Screen.Profile(mid, Screen.Tabs)
-                                    } else Screen.Tabs
+                        is Screen.ProfileEdit -> {
+                            val myId = (myProfile ?: return@Column).id
+                            EditProfileScreen(
+                                session = s, me = myProfile ?: return@Column,
+                                onBack = { screen = Screen.Profile(myId, Screen.Tabs) },
+                                onSaved = {
+                                    scope.launch {
+                                        me = runCatching { ClubApi.ensureMember(s) }.getOrNull() ?: me
+                                        val mid = me?.id
+                                        screen = if (mid != null) {
+                                            Screen.Profile(mid, Screen.Tabs)
+                                        } else Screen.Tabs
+                                    }
                                 }
-                            }
-                        )
+                            )
+                        }
                         is Screen.ChatDetails -> ChatDetailsScreen(
                             session = s, me = myProfile ?: return@Column,
                             partner = scr.partner,
