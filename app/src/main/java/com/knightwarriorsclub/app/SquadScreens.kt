@@ -148,7 +148,7 @@ fun SquadsScreen(
         }
         Spacer(Modifier.height(12.dp))
         if (owned == null) {
-            GoldButton("+ CREATE SQUAD") { onCreate() }
+            GoldButton("+ CREATE SQUAD", enabled = true) { onCreate() }
         } else {
             GlassCard(Modifier.fillMaxWidth()) {
                 Text(
@@ -678,7 +678,7 @@ fun SquadDetailsScreen(
             }
         }
         if (isCaptain) {
-            GoldButton("+ ADD MEMBERS") { adding = true }
+            GoldButton("+ ADD MEMBERS", enabled = true) { adding = true }
             Spacer(Modifier.height(10.dp))
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
