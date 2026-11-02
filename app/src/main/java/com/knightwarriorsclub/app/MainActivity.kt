@@ -174,6 +174,12 @@ fun ClubApp(
     val context = LocalContext.current
     var lastBackAt by remember { mutableStateOf(0L) }
     BackHandler(enabled = session != null && screen is Screen.Tabs) {
+        // Rule 1, refined by Pranto (2026-11-02): Back on any other tab
+        // goes HOME first; only at Home does double-tap exit apply
+        if (tab != Tab.Home) {
+            tab = Tab.Home
+            return@BackHandler
+        }
         val now = System.currentTimeMillis()
         if (now - lastBackAt < 2000) {
             (context as? Activity)?.finish()
