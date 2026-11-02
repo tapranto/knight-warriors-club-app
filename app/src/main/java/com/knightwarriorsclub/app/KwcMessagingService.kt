@@ -51,6 +51,27 @@ object PushStore {
             .edit().putString("ringing_call_id", callId).apply()
     }
 
+    fun saveCallInfo(context: Context, invite: PushInviteData) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+            .putString("ringing_call_id", invite.callId)
+            .putLong("ringing_from_id", invite.fromId)
+            .putString("ringing_from_name", invite.fromName)
+            .putString("ringing_kind", invite.kind)
+            .apply()
+    }
+
+    fun callInfo(context: Context): PushInviteData? {
+        val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val id = p.getString("ringing_call_id", null) ?: return null
+        return PushInviteData(
+            callId = id,
+            fromId = p.getLong("ringing_from_id", 0L),
+            fromName = p.getString("ringing_from_name", null) ?: "Member",
+            fromAvatar = null,
+            kind = p.getString("ringing_kind", null) ?: "voice"
+        )
+    }
+
     fun ringingCallId(context: Context): String? =
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getString("ringing_call_id", null)
@@ -107,17 +128,79 @@ object PushNotifier {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setTimeoutAfter(35_000)
             .build()
         nm.notify(data.callId.hashCode(), notif)
-        PushStore.saveCall(context, data.callId)
+        PushStore.saveCallInfo(context, data)
+        scheduleMissedCheck(context, data.callId)
     }
 
     fun clearCallNotification(context: Context) {
         val callId = PushStore.ringingCallId(context) ?: return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.cancel(callId.hashCode())
+        cancelMissedCheck(context, callId)
         PushStore.clearCall(context)
+    }
+
+    /** Local safety net (beta18): after the ring window, if the call is
+     *  still sitting unanswered in PushStore, convert it into a missed
+     *  call notification — even if the caller's side never sends the
+     *  server missed-push (older app/website) or that push gets lost. */
+    fun scheduleMissedCheck(context: Context, callId: String) {
+        runCatching {
+            val am = context.getSystemService(android.app.AlarmManager::class.java) ?: return
+            am.setAndAllowWhileIdle(
+                android.app.AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 40_000,
+                missedCheckIntent(context, callId)
+            )
+        }
+    }
+
+    fun cancelMissedCheck(context: Context, callId: String) {
+        runCatching {
+            val am = context.getSystemService(android.app.AlarmManager::class.java) ?: return
+            am.cancel(missedCheckIntent(context, callId))
+        }
+    }
+
+    private fun missedCheckIntent(context: Context, callId: String): PendingIntent {
+        val intent = Intent(context, MissedCallReceiver::class.java).apply {
+            action = "com.knightwarriorsclub.app.MISSED_CHECK"
+            putExtra("call_id", callId)
+        }
+        return PendingIntent.getBroadcast(
+            context, ("missedcheck_$callId").hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    /** The persistent "Missed call" notification (tap opens the chat). */
+    fun showMissedNotification(
+        context: Context, callId: String, fromId: Long, fromName: String, kind: String
+    ) {
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        cancelMissedCheck(context, callId)
+        nm.cancel(callId.hashCode()) // stop the ringing notification
+        PushStore.clearCall(context)
+        ensureMessagesChannel(context, nm, ALERTS_CHANNEL_ID, "Missed calls")
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("kwc_open_chat", fromId)
+        }
+        val pi = PendingIntent.getActivity(
+            context, ("missed_$callId").hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(context, ALERTS_CHANNEL_ID)
+            .setSmallIcon(context.applicationInfo.icon)
+            .setContentTitle("Missed call")
+            .setContentText("$fromName — $kind call")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(("missed_$callId").hashCode(), notif)
     }
 
     private fun ensureChannel(context: Context, nm: NotificationManager) {
@@ -173,27 +256,7 @@ class KwcMessagingService : FirebaseMessagingService() {
         val fromId = data["from_id"]?.toLongOrNull() ?: return
         val fromName = data["from_name"] ?: "Member"
         val kind = if (data["kind"] == "video") "video" else "voice"
-        val nm = getSystemService(NotificationManager::class.java) ?: return
-        nm.cancel(callId.hashCode()) // stop the ringing notification
-        PushStore.clearCall(this)
-        PushNotifier.ensureMessagesChannel(this, nm, PushNotifier.ALERTS_CHANNEL_ID, "Missed calls")
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("kwc_open_chat", fromId)
-        }
-        val pi = PendingIntent.getActivity(
-            this, ("missed_$callId").hashCode(), intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-        val notif = NotificationCompat.Builder(this, PushNotifier.ALERTS_CHANNEL_ID)
-            .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("Missed call")
-            .setContentText("$fromName — $kind call")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(pi)
-            .setAutoCancel(true)
-            .build()
-        nm.notify(("missed_$callId").hashCode(), notif)
+        PushNotifier.showMissedNotification(this, callId, fromId, fromName, kind)
     }
 
     /** A chat message: notify unless the app is in the foreground
@@ -235,5 +298,19 @@ class KwcMessagingService : FirebaseMessagingService() {
         val info = android.app.ActivityManager.RunningAppProcessInfo()
         android.app.ActivityManager.getMyMemoryState(info)
         return info.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
+    }
+}
+
+
+/** Fires ~40 s after a call push: converts an unanswered ring into a
+ *  missed-call notification locally (see PushNotifier.scheduleMissedCheck). */
+class MissedCallReceiver : android.content.BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val callId = intent?.getStringExtra("call_id") ?: return
+        val info = PushStore.callInfo(context) ?: return
+        if (info.callId != callId) return
+        PushNotifier.showMissedNotification(
+            context, info.callId, info.fromId, info.fromName, info.kind
+        )
     }
 }
