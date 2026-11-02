@@ -3,16 +3,19 @@ package com.knightwarriorsclub.app
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,17 +23,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonPrimitive
 import com.knightwarriorsclub.app.data.BackgroundStore
 import com.knightwarriorsclub.app.data.ChatPrefs
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Member
 import com.knightwarriorsclub.app.data.Session
 import com.knightwarriorsclub.app.data.Squad
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
 
@@ -47,17 +56,141 @@ private fun memberSince(createdAt: String?): String? = createdAt?.let {
  * SQUAD line on every profile (captain of / member of / no squad).
  * Game UIDs and team strengths show only on your OWN profile.
  */
+/** Loads a remote image (member photos live in Supabase Storage). */
+@Composable
+fun rememberRemoteBitmap(url: String?): android.graphics.Bitmap? {
+    var bmp by remember(url) { mutableStateOf(url?.let { avatarBitmapCache[it] }) }
+    LaunchedEffect(url) {
+        if (url != null && bmp == null) {
+            bmp = withContext(Dispatchers.IO) {
+                runCatching {
+                    val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 8000
+                    conn.readTimeout = 8000
+                    conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+                }.getOrNull()?.also { avatarBitmapCache[url] = it }
+            }
+        }
+    }
+    return bmp
+}
+
+private val avatarBitmapCache = mutableMapOf<String, android.graphics.Bitmap>()
+
+/**
+ * A member's round photo — the REAL picture from the database when they
+ * have one (avatar_url), initials otherwise. On your own profile it can
+ * carry the gold pen badge: tap it to change the photo (Pranto, 2026-11-02).
+ */
+@Composable
+fun AvatarImage(
+    url: String?, name: String, size: Int,
+    showEditPen: Boolean = false,
+    onEditClick: () -> Unit = {}
+) {
+    val bmp = rememberRemoteBitmap(url)
+    Box {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = name,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(size.dp).clip(CircleShape)
+                    .border(1.5.dp, Gold, CircleShape)
+            )
+        } else {
+            InitialAvatar(name, size)
+        }
+        if (showEditPen) {
+            Box(
+                Modifier.align(Alignment.BottomEnd)
+                    .size((size / 3).coerceAtLeast(26).dp)
+                    .clip(CircleShape).background(Gold)
+                    .border(1.5.dp, Ink, CircleShape)
+                    .clickable { onEditClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Filled.Edit, contentDescription = "Change photo",
+                    tint = Ink, modifier = Modifier.size((size / 5).coerceAtLeast(15).dp)
+                )
+            }
+        }
+    }
+}
+
+/** Decode a picked photo, downscale to 512px like the website, JPEG-encode. */
+suspend fun decodeDownscaledJpeg(
+    context: android.content.Context, uri: android.net.Uri, maxDim: Int = 512
+): ByteArray? = withContext(Dispatchers.IO) {
+    runCatching {
+        val resolver = context.contentResolver
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+        }
+        var sample = 1
+        var w = bounds.outWidth
+        var h = bounds.outHeight
+        while (w > maxDim || h > maxDim) {
+            sample *= 2
+            w /= 2
+            h /= 2
+        }
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        val bitmap = resolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it, null, opts)
+        } ?: return@runCatching null
+        val out = java.io.ByteArrayOutputStream()
+        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+        bitmap.recycle()
+        out.toByteArray()
+    }.getOrNull()
+}
+
+private fun gameSymbol(game: String): String = when (game) {
+    "eFootball" -> "●"
+    "PUBG" -> "◎"
+    "Clash of Clans" -> "♜"
+    "Call of Duty" -> "✛"
+    else -> "◆"
+}
+
+@Composable
+private fun StatPill(text: String) {
+    Box(
+        Modifier.clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.13f))
+            .border(1.dp, GlassRim, RoundedCornerShape(50))
+            .padding(horizontal = 14.dp, vertical = 7.dp)
+    ) {
+        Text(text, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+    }
+}
+
+/**
+ * A member's profile page — redesigned 2026-11-02 (Pranto: "looks
+ * boring"): club cover banner, big photo overlapping it (real photo
+ * from the database; gold pen on your own to change it), stat pills,
+ * game cards, honours, and the SQUAD line for every member.
+ */
 @Composable
 fun MemberProfileScreen(
     session: Session, me: Member, memberId: Long,
     onBack: () -> Unit,
     onMessage: (Member) -> Unit = {},
-    onCall: (Member, String) -> Unit = { _, _ -> }
+    onCall: (Member, String) -> Unit = { _, _ -> },
+    onEdit: () -> Unit = {},
+    onMeChanged: () -> Unit = {}
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var member by remember { mutableStateOf<Member?>(null) }
     var games by remember { mutableStateOf<List<Triple<String, String?, Int?>>>(emptyList()) }
     var squads by remember { mutableStateOf<List<Pair<Squad, String>>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
+    var photoBusy by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(memberId) {
         member = ClubApi.memberById(session, memberId)
@@ -68,6 +201,35 @@ fun MemberProfileScreen(
 
     val m = member
     val own = memberId == me.id
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null && m != null) {
+            photoBusy = true
+            scope.launch {
+                val bytes = decodeDownscaledJpeg(context, uri)
+                val uploaded = bytes?.let { ClubApi.uploadAvatar(session, it) }
+                val url = uploaded?.getOrNull()
+                if (url != null) {
+                    val upd = ClubApi.updateMemberProfile(
+                        session, m.id, mapOf("avatar_url" to JsonPrimitive(url))
+                    )
+                    if (upd.isSuccess) {
+                        member = m.copy(avatarUrl = url)
+                        note = "Profile photo updated."
+                        onMeChanged()
+                    } else {
+                        note = "Photo uploaded but the profile link failed — try again."
+                    }
+                } else {
+                    note = "Photo upload failed — check your connection."
+                }
+                photoBusy = false
+            }
+        }
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
@@ -78,7 +240,7 @@ fun MemberProfileScreen(
             Spacer(Modifier.width(10.dp))
             Text("Profile", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
         if (!loaded) {
             Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
             return@Column
@@ -89,47 +251,95 @@ fun MemberProfileScreen(
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                GlassCard(Modifier.fillMaxWidth()) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        InitialAvatar(m.fullName, 64)
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(m.fullName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            Text(
-                                m.username?.let { "@$it" } ?: "Knight Warriors member",
-                                color = Color(0xFFC4CEDC), fontSize = 12.sp
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            Box(
-                                Modifier.clip(RoundedCornerShape(10.dp))
-                                    .background(
-                                        if (m.role == "President") Color(0xFFD4A017)
-                                        else Color.White.copy(alpha = 0.18f)
+                // cover banner + overlapping photo
+                val coverBmp = rememberRemoteBitmap(m.coverUrl)
+                Box(Modifier.fillMaxWidth().height(238.dp)) {
+                    if (coverBmp != null) {
+                        Image(
+                            bitmap = coverBmp.asImageBitmap(),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxWidth().height(192.dp)
+                                .align(Alignment.TopCenter)
+                                .clip(RoundedCornerShape(20.dp))
+                        )
+                    } else {
+                        Image(
+                            painter = androidx.compose.ui.res.painterResource(R.drawable.profile_cover),
+                            contentDescription = null,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxWidth().height(192.dp)
+                                .align(Alignment.TopCenter)
+                                .clip(RoundedCornerShape(20.dp))
+                        )
+                    }
+                    Box(Modifier.padding(start = 14.dp).align(Alignment.BottomStart)) {
+                        AvatarImage(
+                            url = m.avatarUrl, name = m.fullName, size = 92,
+                            showEditPen = own && !photoBusy,
+                            onEditClick = {
+                                photoPicker.launch(
+                                    PickVisualMediaRequest(
+                                        ActivityResultContracts.PickVisualMedia.ImageOnly
                                     )
-                                    .padding(horizontal = 8.dp, vertical = 3.dp)
-                            ) {
-                                Text(
-                                    m.role.uppercase(),
-                                    color = if (m.role == "President") Ink else Color.White,
-                                    fontSize = 10.sp, fontWeight = FontWeight.Bold
                                 )
                             }
+                        )
+                    }
+                }
+                if (photoBusy) {
+                    Text("Uploading photo…", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                }
+            }
+            item {
+                Column(Modifier.padding(horizontal = 2.dp)) {
+                    Text(m.fullName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+                    Text(
+                        m.username?.let { "@$it" } ?: "Knight Warriors member",
+                        color = Color(0xFFC4CEDC), fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier.clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (m.role == "President") Gold
+                                    else Color.White.copy(alpha = 0.18f)
+                                )
+                                .padding(horizontal = 9.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                m.role.uppercase(),
+                                color = if (m.role == "President") Ink else Color.White,
+                                fontSize = 10.sp, fontWeight = FontWeight.Bold
+                            )
+                        }
+                        memberSince(m.createdAt)?.let {
+                            Spacer(Modifier.width(10.dp))
+                            Text("Member since $it", color = Color(0xFFC4CEDC), fontSize = 12.sp)
                         }
                     }
                     if (!m.bio.isNullOrBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Text(m.bio, color = Color(0xFFF2F5F9), fontSize = 13.sp)
                     }
-                    memberSince(m.createdAt)?.let {
-                        Spacer(Modifier.height(8.dp))
-                        Text("Member since $it", color = Color(0xFFC4CEDC), fontSize = 11.sp)
-                    }
-                    if (!m.favouriteGame.isNullOrBlank()) {
-                        Text("Favourite game: ${m.favouriteGame}", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatPill("${games.size} Games")
+                        StatPill("${squads.size} Squads")
+                        if (own) {
+                            StatPill("${games.count { it.second != null }} Game IDs")
+                        } else if (!m.favouriteGame.isNullOrBlank()) {
+                            StatPill("★ ${m.favouriteGame}")
+                        }
                     }
                 }
             }
-            if (!own) {
+            if (own) {
+                item {
+                    GoldButton("EDIT PROFILE", enabled = true) { onEdit() }
+                }
+            } else {
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(
@@ -166,7 +376,13 @@ fun MemberProfileScreen(
                 Spacer(Modifier.height(6.dp))
                 GlassCard(Modifier.fillMaxWidth()) {
                     if (squads.isEmpty()) {
-                        Text("No squad", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+                        Text("No squad yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        if (own) {
+                            Text(
+                                "Create yours: More → My Squads → Create Squad",
+                                color = Color(0xFFC4CEDC), fontSize = 11.sp
+                            )
+                        }
                     } else {
                         squads.forEach { (sq, _) ->
                             val isCaptain = sq.captainId == m.id
@@ -190,30 +406,278 @@ fun MemberProfileScreen(
             item {
                 Text("GAMES", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
-                GlassCard(Modifier.fillMaxWidth()) {
-                    if (games.isEmpty()) {
+                if (games.isEmpty()) {
+                    GlassCard(Modifier.fillMaxWidth()) {
                         Text("No games added yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
-                    } else {
-                        games.forEach { (game, uid, strength) ->
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(game, color = Color.White, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                                if (own) {
-                                    Text(
-                                        listOfNotNull(
-                                            uid?.let { "UID $it" },
-                                            strength?.let { "Strength $it" }
-                                        ).joinToString(" • "),
-                                        color = Color(0xFFC4CEDC), fontSize = 11.sp
-                                    )
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        games.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                pair.forEach { (game, uid, strength) ->
+                                    GlassCard(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(gameSymbol(game), color = GoldLight, fontSize = 17.sp)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column {
+                                                Text(game, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                                if (own) {
+                                                    val sub = listOfNotNull(
+                                                        uid?.let { "UID $it" },
+                                                        strength?.let { "⚔ $it" }
+                                                    ).joinToString(" • ")
+                                                    if (sub.isNotBlank()) {
+                                                        Text(sub, color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
                             }
-                            if (game != games.last().first) Spacer(Modifier.height(8.dp))
                         }
                     }
                 }
             }
+            item {
+                Text("TOURNAMENT HONOURS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                GlassCard(Modifier.fillMaxWidth()) {
+                    Text("♛  No honours yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Text(
+                        "Win a club tournament and it appears here.",
+                        color = Color(0xFFC4CEDC), fontSize = 11.sp
+                    )
+                }
+            }
+            if (note != null) {
+                item {
+                    Text(note!!, color = Color(0xFFC4CEDC), fontSize = 12.sp)
+                }
+            }
             item { Spacer(Modifier.height(8.dp)) }
         }
+    }
+}
+
+
+/**
+ * Edit your own profile (Pranto, 2026-11-02): photo (with the pen),
+ * name, username, bio, favourite game, and each game's UID + team
+ * strength — the same fields the website's Edit Profile offers.
+ */
+@Composable
+fun EditProfileScreen(
+    session: Session, me: Member,
+    onBack: () -> Unit,
+    onSaved: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var loaded by remember { mutableStateOf(false) }
+    var avatarUrl by remember { mutableStateOf<String?>(null) }
+    var fullName by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var bio by remember { mutableStateOf("") }
+    var favourite by remember { mutableStateOf<String?>(null) }
+    var original by remember { mutableStateOf<Member?>(null) }
+    var gameRows by remember { mutableStateOf<List<Triple<String, String?, Int?>>>(emptyList()) }
+    val gameEdits = remember { mutableStateMapOf<String, Pair<String, String>>() }
+    var busy by remember { mutableStateOf(false) }
+    var photoBusy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(me.id) {
+        val fresh = ClubApi.memberById(session, me.id)
+        if (fresh != null) {
+            original = fresh
+            avatarUrl = fresh.avatarUrl
+            fullName = fresh.fullName
+            username = fresh.username ?: ""
+            bio = fresh.bio ?: ""
+            favourite = fresh.favouriteGame
+        }
+        val rows = ClubApi.memberGames(session, me.id)
+        gameRows = rows
+        rows.forEach { (g, uid, st) ->
+            gameEdits[g] = (uid ?: "") to (st?.toString() ?: "")
+        }
+        loaded = true
+    }
+
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            photoBusy = true
+            scope.launch {
+                val bytes = decodeDownscaledJpeg(context, uri)
+                val url = bytes?.let { ClubApi.uploadAvatar(session, it) }?.getOrNull()
+                if (url != null) {
+                    val upd = ClubApi.updateMemberProfile(
+                        session, me.id, mapOf("avatar_url" to JsonPrimitive(url))
+                    )
+                    if (upd.isSuccess) {
+                        avatarUrl = url
+                        error = null
+                    } else {
+                        error = "Photo uploaded but saving it failed — try again."
+                    }
+                } else {
+                    error = "Photo upload failed — check your connection."
+                }
+                photoBusy = false
+            }
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
+                tint = Color.White,
+                modifier = Modifier.size(26.dp).clickable { onBack() }
+            )
+            Spacer(Modifier.width(10.dp))
+            Text("Edit Profile", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        }
+        Spacer(Modifier.height(12.dp))
+        if (!loaded) {
+            Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+            return@Column
+        }
+        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AvatarImage(
+                        url = avatarUrl, name = fullName.ifBlank { me.fullName }, size = 76,
+                        showEditPen = !photoBusy,
+                        onEditClick = {
+                            photoPicker.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        }
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column {
+                        Text("Profile photo", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text(
+                            if (photoBusy) "Uploading…" else "Tap the gold pen to change it",
+                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            item {
+                ClubTextField("Full name", fullName, { fullName = it })
+            }
+            item {
+                ClubTextField("Username", username, { username = it }, placeholder = "for your profile link")
+            }
+            item {
+                ClubTextField("Bio", bio, { bio = it }, placeholder = "A line about you")
+            }
+            item {
+                Text("FAVOURITE GAME", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("eFootball", "PUBG", "Clash of Clans", "Call of Duty").forEach { g ->
+                        val sel = favourite == g
+                        Box(
+                            Modifier.clip(RoundedCornerShape(50))
+                                .background(if (sel) Gold else Color.White.copy(alpha = 0.13f))
+                                .border(1.dp, if (sel) Gold else GlassRim, RoundedCornerShape(50))
+                                .clickable { favourite = if (sel) null else g }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) {
+                            Text(
+                                g, color = if (sel) Ink else Color.White,
+                                fontSize = 11.sp, fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+            if (gameRows.isNotEmpty()) {
+                item {
+                    Text("MY GAMES — UID & TEAM STRENGTH", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                items(gameRows, key = { it.first }) { (game, _, _) ->
+                    val edit = gameEdits[game] ?: ("" to "")
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text(game, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Spacer(Modifier.height(8.dp))
+                        ClubTextField("Game UID", edit.first, { v ->
+                            gameEdits[game] = v to edit.second
+                        }, placeholder = "your in-game ID")
+                        Spacer(Modifier.height(8.dp))
+                        ClubTextField("Team strength", edit.second, { v ->
+                            gameEdits[game] = edit.first to v.filter { ch -> ch.isDigit() }
+                        }, placeholder = "e.g. 3200")
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(4.dp)) }
+        }
+        if (error != null) {
+            Text(error!!, color = Color(0xFFFF9B9B), fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+        }
+        GoldButton(if (busy) "SAVING…" else "SAVE CHANGES", enabled = !busy && fullName.isNotBlank()) {
+            busy = true
+            error = null
+            scope.launch {
+                val orig = original
+                val fields = mutableMapOf<String, JsonElement>()
+                if (orig == null || fullName.trim() != orig.fullName) {
+                    fields["full_name"] = JsonPrimitive(fullName.trim())
+                }
+                val newUser = username.trim().lowercase().removePrefix("@")
+                if (orig == null || newUser != (orig.username ?: "")) {
+                    fields["username"] =
+                        if (newUser.isBlank()) JsonNull else JsonPrimitive(newUser)
+                }
+                val newBio = bio.trim()
+                if (orig == null || newBio != (orig.bio ?: "")) {
+                    fields["bio"] = if (newBio.isBlank()) JsonNull else JsonPrimitive(newBio)
+                }
+                if (orig == null || favourite != orig.favouriteGame) {
+                    fields["favourite_game"] =
+                        favourite?.let { JsonPrimitive(it) } ?: JsonNull
+                }
+                var failure: String? = null
+                if (fields.isNotEmpty()) {
+                    val res = ClubApi.updateMemberProfile(session, me.id, fields)
+                    if (res.isFailure) {
+                        failure = "Couldn't save — if you changed your username, it may already be taken."
+                    }
+                }
+                if (failure == null) {
+                    for ((game, origRow) in gameRows.associateBy { it.first }) {
+                        val edit = gameEdits[game] ?: continue
+                        val newUid = edit.first.trim().ifBlank { null }
+                        val newStrength = edit.second.toIntOrNull()
+                        if (newUid != origRow.second || newStrength != origRow.third) {
+                            val r = ClubApi.updateMemberGame(session, me.id, game, newUid, newStrength)
+                            if (r.isFailure) {
+                                failure = "Profile saved, but the $game details didn't update."
+                                break
+                            }
+                        }
+                    }
+                }
+                busy = false
+                if (failure != null) {
+                    error = failure
+                } else {
+                    onSaved()
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
     }
 }
 
@@ -347,7 +811,7 @@ fun ChatDetailsScreen(
             item {
                 GlassCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                        InitialAvatar(partner.fullName, 72)
+                        AvatarImage(url = partner.avatarUrl, name = partner.fullName, size = 72)
                         Spacer(Modifier.height(10.dp))
                         Text(
                             ChatPrefs.nickname(context, partner.id) ?: partner.fullName,

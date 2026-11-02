@@ -88,6 +88,7 @@ private sealed interface Screen {
     data class Chat(val partner: Member) : Screen
     // v0.4.0 routes
     data class Profile(val memberId: Long, val backTo: Screen) : Screen
+    data object ProfileEdit : Screen
     data class ChatDetails(val partner: Member) : Screen
     data object Squads : Screen
     data object CreateSquad : Screen
@@ -169,6 +170,10 @@ fun ClubApp(
     }
     BackHandler(enabled = session != null && screen is Screen.Profile) {
         screen = (screen as Screen.Profile).backTo
+    }
+    BackHandler(enabled = session != null && screen is Screen.ProfileEdit) {
+        val mid = me?.id
+        screen = if (mid != null) Screen.Profile(mid, Screen.Tabs) else Screen.Tabs
     }
     BackHandler(enabled = session != null && screen is Screen.Squads) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.CreateSquad) { screen = Screen.Squads }
@@ -327,7 +332,30 @@ fun ClubApp(
                             memberId = scr.memberId,
                             onBack = { screen = scr.backTo },
                             onMessage = { m -> screen = Screen.Chat(m) },
-                            onCall = { m, k -> callController?.startCall(m, k) }
+                            onCall = { m, k -> callController?.startCall(m, k) },
+                            onEdit = { screen = Screen.ProfileEdit },
+                            onMeChanged = {
+                                scope.launch {
+                                    me = runCatching { ClubApi.ensureMember(s) }.getOrNull() ?: me
+                                }
+                            }
+                        )
+                        is Screen.ProfileEdit -> EditProfileScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = {
+                                screen = Screen.Profile(
+                                    (myProfile ?: return@Column).id, Screen.Tabs
+                                )
+                            },
+                            onSaved = {
+                                scope.launch {
+                                    me = runCatching { ClubApi.ensureMember(s) }.getOrNull() ?: me
+                                    val mid = me?.id
+                                    screen = if (mid != null) {
+                                        Screen.Profile(mid, Screen.Tabs)
+                                    } else Screen.Tabs
+                                }
+                            }
                         )
                         is Screen.ChatDetails -> ChatDetailsScreen(
                             session = s, me = myProfile ?: return@Column,
@@ -639,7 +667,7 @@ private fun MorePanel(
                 me?.let { onOpenProfile(it.id) }
             }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (me != null) InitialAvatar(me.fullName, 46)
+                    if (me != null) AvatarImage(url = me.avatarUrl, name = me.fullName, size = 46)
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(

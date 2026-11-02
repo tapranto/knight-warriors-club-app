@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -40,7 +41,8 @@ data class Member(
     val role: String = "Member",
     val bio: String? = null,
     val favouriteGame: String? = null,
-    val createdAt: String? = null
+    val createdAt: String? = null,
+    val coverUrl: String? = null
 )
 
 /** A squad (group chat) — Messenger-style since 2026-11-02: anyone can
@@ -310,10 +312,11 @@ object ClubApi {
         role = o["role"]?.jsonPrimitive?.contentOrNull ?: "Member",
         bio = o["bio"]?.jsonPrimitive?.contentOrNull,
         favouriteGame = o["favourite_game"]?.jsonPrimitive?.contentOrNull,
-        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull,
+        coverUrl = o["cover_url"]?.jsonPrimitive?.contentOrNull
     )
 
-    private const val MEMBER_SELECT = "id,full_name,username,avatar_url,role,bio,favourite_game,created_at"
+    private const val MEMBER_SELECT = "id,full_name,username,avatar_url,cover_url,role,bio,favourite_game,created_at"
 
     /** The signed-in user's own member row (links auth user → member id). */
     suspend fun myMember(session: Session): Member? {
@@ -372,6 +375,58 @@ object ClubApi {
             }
         }.getOrDefault(emptyList())
     }
+
+    // ---------- profile editing (v0.4.0-beta3) ----------
+
+    /** Update the signed-in member's own profile fields. */
+    suspend fun updateMemberProfile(
+        session: Session, memberId: Long, fields: Map<String, JsonElement>
+    ): Result<Unit> = runCatching {
+        val (code, _) = restPatch(
+            session, "/rest/v1/members", "id=eq.$memberId",
+            buildJsonObject { fields.forEach { (k, v) -> put(k, v) } }
+        )
+        check(code in 200..299) { "profile update failed (HTTP $code)" }
+    }
+
+    /** Update one of the member's game rows (UID / team strength). */
+    suspend fun updateMemberGame(
+        session: Session, memberId: Long, game: String, uid: String?, strength: Int?
+    ): Result<Unit> = runCatching {
+        val filter = "member_id=eq.$memberId&game=eq." +
+                java.net.URLEncoder.encode(game, "UTF-8").replace("+", "%20")
+        val (code, _) = restPatch(
+            session, "/rest/v1/member_games", filter,
+            buildJsonObject {
+                put("uid", uid?.takeIf { it.isNotBlank() }?.let { JsonPrimitive(it) } ?: JsonNull)
+                put(
+                    "team_strength",
+                    strength?.let { JsonPrimitive(it) } ?: JsonNull
+                )
+            }
+        )
+        check(code in 200..299) { "game update failed (HTTP $code)" }
+    }
+
+    /**
+     * Upload a new profile photo, mirroring the website exactly:
+     * avatars bucket, path <authUserId>/avatar-<millis>.jpg, JPEG.
+     * Returns the public URL to store in members.avatar_url.
+     */
+    suspend fun uploadAvatar(session: Session, jpegBytes: ByteArray): Result<String> =
+        runCatching {
+            val path = "${session.authUserId}/avatar-${System.currentTimeMillis()}.jpg"
+            val req = Request.Builder()
+                .url(ClubConfig.SUPABASE_URL + "/storage/v1/object/avatars/$path")
+                .addHeader("apikey", ClubConfig.SUPABASE_PUBLISHABLE_KEY)
+                .addHeader("Authorization", "Bearer ${session.accessToken}")
+                .addHeader("x-upsert", "true")
+                .post(jpegBytes.toRequestBody("image/jpeg".toMediaType()))
+                .build()
+            val (code, body) = execute(req)
+            check(code in 200..299) { "photo upload failed (HTTP $code): ${body.take(160)}" }
+            ClubConfig.SUPABASE_URL + "/storage/v1/object/public/avatars/" + path
+        }
 
     /**
      * One page of a DM thread, returned OLDEST FIRST for display.
