@@ -78,6 +78,7 @@ class CallController(private val context: Context) {
         private const val RING_MS = 30000L        // caller rings this long (web parity)
         private const val CALLEE_RING_MS = 40000L // callee-side stale-ring safety (web parity)
         private const val DISCONNECT_GRACE_MS = 6000L
+        private const val CONNECT_MS = 20000L      // max time in Connecting… before failing the call
         private val ICE_SERVERS = listOf(
             "stun:stun.l.google.com:19302" to null,
             "stun:stun1.l.google.com:19302" to null,
@@ -134,6 +135,7 @@ class CallController(private val context: Context) {
     private var ringTimer: Runnable? = null
     private var discTimer: Runnable? = null
     private var durationTimer: Runnable? = null
+    private var connectTimer: Runnable? = null
 
     // ── lifecycle ────────────────────────────────────────────────────────
 
@@ -288,6 +290,7 @@ class CallController(private val context: Context) {
             stopRing()
             startAudioRouting()
             uiState = uiState.copy(phase = CallPhase.CONNECTING, statusText = "Connecting…")
+            armConnectWatchdog()
             val id = callId ?: return@withPermissions
             rt?.joinBroadcast("kwc-call-$id", { event, payload -> onCallEvent(event, payload) }) {
                 rt?.broadcast("kwc-call-$id", "ready", buildJsonObject {})
@@ -355,9 +358,20 @@ class CallController(private val context: Context) {
         }
     }
 
+    /** Connecting… must never hang forever (Pranto, 2026-11-02): if the
+     *  voice path has not opened in CONNECT_MS, fail the call cleanly. */
+    private fun armConnectWatchdog() {
+        connectTimer?.let { main.removeCallbacks(it) }
+        connectTimer = Runnable {
+            if (uiState.phase == CallPhase.CONNECTING) endCallInternal("connect-failed")
+        }
+        main.postDelayed(connectTimer!!, CONNECT_MS)
+    }
+
     private fun callerOnReady() {
         if (pc != null) return
         uiState = uiState.copy(phase = CallPhase.CONNECTING, statusText = "Connecting…")
+        armConnectWatchdog()
         val conn = buildPeerConnection() ?: return
         conn.createOffer(object : SdpObserver {
             override fun onCreateSuccess(desc: SessionDescription) {
@@ -607,6 +621,8 @@ class CallController(private val context: Context) {
             PeerConnection.PeerConnectionState.CONNECTED -> {
                 discTimer?.let { main.removeCallbacks(it) }
                 discTimer = null
+                connectTimer?.let { main.removeCallbacks(it) }
+                connectTimer = null
                 if (!answered) {
                     answered = true
                     startedAt = System.currentTimeMillis()
@@ -765,6 +781,8 @@ class CallController(private val context: Context) {
         ringTimer = null
         discTimer?.let { main.removeCallbacks(it) }
         discTimer = null
+        connectTimer?.let { main.removeCallbacks(it) }
+        connectTimer = null
         durationTimer?.let { main.removeCallbacks(it) }
         durationTimer = null
         if (!fromRemote) {
@@ -793,6 +811,7 @@ class CallController(private val context: Context) {
                 reason == "declined" -> "Call declined"
                 reason == "busy" -> "$pName is busy"
                 reason == "timeout" -> "No answer"
+                reason == "connect-failed" -> "Couldn't connect — the network blocked the voice path"
                 reason == "failed" -> "Call connection failed — check your connection and try again."
                 wasAnswered -> "Call ended"
                 else -> "Call ended"
