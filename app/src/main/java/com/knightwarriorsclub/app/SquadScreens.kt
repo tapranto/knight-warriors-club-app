@@ -78,7 +78,7 @@ fun MemberPicker(
                 val isSel = selected.contains(m.id)
                 GlassCard(Modifier.fillMaxWidth().clickable { onToggle(m) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        InitialAvatar(m.fullName, 38)
+                        AvatarImage(url = m.avatarUrl, name = m.fullName, size = 38)
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -655,7 +655,7 @@ fun SquadDetailsScreen(
                 items(rows, key = { it.member.id }) { row ->
                     GlassCard(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            InitialAvatar(row.member.fullName, 38)
+                            AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 38)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(row.member.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)

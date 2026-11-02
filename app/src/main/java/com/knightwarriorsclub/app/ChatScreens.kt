@@ -311,7 +311,7 @@ fun InboxScreen(
                         onOpenChat(m)
                     }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            InitialAvatar(m.fullName)
+                            AvatarImage(url = m.avatarUrl, name = m.fullName)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -402,7 +402,7 @@ fun InboxScreen(
                                     )
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        InitialAvatar(m.fullName)
+                                        AvatarImage(url = m.avatarUrl, name = m.fullName)
                                         Spacer(Modifier.width(12.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(
@@ -757,7 +757,7 @@ fun ChatScreen(
                 Modifier.clickable { onOpenDetails(partner) },
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                InitialAvatar(partner.fullName, 38)
+                AvatarImage(url = partner.avatarUrl, name = partner.fullName, size = 38)
                 Spacer(Modifier.width(10.dp))
                 Column {
                     Text(
