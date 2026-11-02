@@ -20,6 +20,37 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.knightwarriorsclub.app.data.Session
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+
+/**
+ * JavaScript that hands the app's Supabase session to the website:
+ * supabase-js keeps its session in localStorage under this key, so
+ * writing it there (then reloading) makes knightwarriorsclub.com boot
+ * already signed in — no second login inside the app (Pranto's bug
+ * report, 2026-11-02: the hybrid Tournament Maker asked for login).
+ * The site's client refreshes the token itself from the refresh token.
+ */
+private fun sessionBridgeJs(session: Session): String {
+    val sessionJson = buildJsonObject {
+        put("access_token", session.accessToken)
+        put("refresh_token", session.refreshToken)
+        put("expires_at", System.currentTimeMillis() / 1000 + 3500)
+        put("expires_in", 3600)
+        put("token_type", "bearer")
+        put("user", buildJsonObject {
+            put("id", session.authUserId)
+            put("email", session.email)
+            put("aud", "authenticated")
+            put("role", "authenticated")
+        })
+    }.toString()
+    val quoted = org.json.JSONObject.quote(sessionJson)
+    return "(function(){try{" +
+            "localStorage.setItem('sb-jpurbipmekomqjdjvquo-auth-token'," + quoted + ");" +
+            "}catch(e){}})();"
+}
 
 /**
  * Hybrid pages (Pranto's decision, 2026-11-02): News, Events / official
@@ -30,8 +61,11 @@ import androidx.compose.ui.viewinterop.AndroidView
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun WebPageView(url: String, modifier: Modifier = Modifier) {
+fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Session? = null) {
     var progress by remember(url) { mutableStateOf(0) }
+    // the login bridge runs once per WebView: write the app's session
+    // into the website's storage, reload, and the site boots signed in
+    var bridged by remember(url) { mutableStateOf(bridgeSession == null) }
     Box(modifier.background(Color(0xFF0A101C))) {
         AndroidView(
             factory = { ctx ->
@@ -42,6 +76,13 @@ fun WebPageView(url: String, modifier: Modifier = Modifier) {
                     settings.useWideViewPort = true
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
+                            val bridge = bridgeSession
+                            if (bridge != null && !bridged) {
+                                bridged = true
+                                view?.evaluateJavascript(sessionBridgeJs(bridge), null)
+                                view?.reload()
+                                return
+                            }
                             // Inside the app, the website's own top header
                             // (logo + nav) duplicates the app's header and
                             // tab bar — hide it and reclaim its space

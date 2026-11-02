@@ -411,7 +411,10 @@ fun ClubApp(
                             // name, bell, envelope) — Pranto, 2026-11-02;
                             // the Android Back button returns to the tabs
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
-                            WebPageView(scr.url, Modifier.weight(1f).fillMaxWidth())
+                            WebPageView(
+                                scr.url, Modifier.weight(1f).fillMaxWidth(),
+                                bridgeSession = s
+                            )
                         }
                         is Screen.Tabs -> {
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
@@ -420,8 +423,12 @@ fun ClubApp(
                                     Tab.Home -> HomeScreen()
                                     // hybrid (Pranto, 2026-11-02): News + Events are
                                     // website pages shown inside the app
-                                    Tab.News -> WebPageView("https://knightwarriorsclub.com/#news")
-                                    Tab.Events -> WebPageView("https://knightwarriorsclub.com/#events")
+                                    Tab.News -> WebPageView(
+                                        "https://knightwarriorsclub.com/#news", bridgeSession = s
+                                    )
+                                    Tab.Events -> WebPageView(
+                                        "https://knightwarriorsclub.com/#events", bridgeSession = s
+                                    )
                                     Tab.More -> MorePanel(
                                         me = myProfile,
                                         onOpenProfile = { mid ->
@@ -445,6 +452,10 @@ fun ClubApp(
                                         },
                                         onLogout = {
                                             store.clear()
+                                            // also sign the website (WebView) out:
+                                            // the bridged session lives in its storage
+                                            android.webkit.WebStorage.getInstance().deleteAllData()
+                                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
                                             session = null
                                             me = null
                                             screen = Screen.Tabs
