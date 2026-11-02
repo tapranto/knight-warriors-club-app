@@ -15,6 +15,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -676,6 +677,10 @@ private fun MorePanel(
     onLogout: () -> Unit
 ) {
     var section by remember { mutableStateOf<String?>(null) }
+    // keep the list's scroll position while Settings/About are open —
+    // the state must live HERE, not inside the list, or going Back
+    // rebuilds the list from the top (Pranto, 2026-11-02)
+    val moreListState = rememberLazyListState()
     BackHandler(enabled = section != null) { section = null }
     when (section) {
         "About the Club" -> {
@@ -689,6 +694,7 @@ private fun MorePanel(
     }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
+        state = moreListState,
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item { ScreenTitle("More", "Everything else in the club") }
