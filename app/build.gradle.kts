@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.knightwarriorsclub.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.4.0-beta14"
+        versionCode = 20
+        versionName = "0.4.0-beta15"
     }
 
     buildTypes {
@@ -47,4 +48,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     // Phase 3: WebRTC media for 1-to-1 calls (signalling rides RealtimeClient)
     implementation("io.github.webrtc-sdk:android:125.6422.07")
+
+    // Firebase Cloud Messaging — the call "doorbell" (Phase 3.1).
+    // BoM pins compatible versions; messaging is the only product used.
+    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
 }

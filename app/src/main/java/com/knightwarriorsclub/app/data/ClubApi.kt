@@ -376,6 +376,38 @@ object ClubApi {
         }.getOrDefault(emptyList())
     }
 
+    // ---------- Phase 3.1: FCM call doorbell ----------
+
+    /** Register this phone's FCM token (Part 12 table member_devices). */
+    suspend fun registerDeviceToken(session: Session, memberId: Long, token: String): Boolean {
+        val payload = buildJsonObject {
+            put("member_id", memberId)
+            put("fcm_token", token)
+            put("platform", "android")
+        }.toString()
+        val (code, _) = restPost(
+            session, "/rest/v1/member_devices", payload,
+            prefer = "resolution=merge-duplicates,return=minimal"
+        )
+        return code in 200..299
+    }
+
+    /** Ask Supabase to ring the callee's phones via FCM (send-call-push). */
+    suspend fun sendCallPush(
+        session: Session, calleeMemberId: Long, callId: String, kind: String
+    ): Boolean = runCatching {
+        val payload = buildJsonObject {
+            put("callee_member_id", calleeMemberId)
+            put("call_id", callId)
+            put("kind", kind)
+        }.toString()
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/send-call-push")
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        val (code, _) = execute(req)
+        code in 200..299
+    }.getOrDefault(false)
+
     // ---------- website data files (Home's live cards) ----------
 
     /** A club tournament from the website's data/tournaments.json. */

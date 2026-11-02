@@ -1,6 +1,7 @@
 package com.knightwarriorsclub.app
 
 import android.app.Activity
+import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -102,6 +103,9 @@ private sealed interface Screen {
 }
 
 class MainActivity : ComponentActivity() {
+    /** Phase 3.1: the latest call invite delivered by FCM push (if any). */
+    private val pushInviteState = mutableStateOf<PushInviteData?>(null)
+
     private var pendingPermCallback: ((Boolean) -> Unit)? = null
     private val permLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
@@ -113,6 +117,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        pushInviteState.value = intent.toPushInvite()
         val store = SessionStore(this)
         setContent {
             // Dark club theme for ALL Material components (dialogs, menus,
@@ -130,19 +135,43 @@ class MainActivity : ComponentActivity() {
                     onSurfaceVariant = Color(0xFFC4CEDC)
                 )
             ) {
-                ClubApp(store, requestPermissions = { perms, cb ->
-                    pendingPermCallback = cb
-                    permLauncher.launch(perms)
-                })
+                ClubApp(
+                    store,
+                    requestPermissions = { perms, cb ->
+                        pendingPermCallback = cb
+                        permLauncher.launch(perms)
+                    },
+                    pushInvite = pushInviteState.value,
+                    onPushInviteConsumed = { pushInviteState.value = null }
+                )
             }
         }
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pushInviteState.value = intent.toPushInvite()
+    }
+}
+
+private fun Intent?.toPushInvite(): PushInviteData? {
+    val callId = this?.getStringExtra("kwc_call_id") ?: return null
+    return PushInviteData(
+        callId = callId,
+        fromId = getLongExtra("kwc_from_id", 0L),
+        fromName = getStringExtra("kwc_from_name") ?: "Member",
+        fromAvatar = getStringExtra("kwc_from_avatar"),
+        kind = getStringExtra("kwc_kind") ?: "voice"
+    )
 }
 
 @Composable
 fun ClubApp(
     store: SessionStore,
-    requestPermissions: (Array<String>, (Boolean) -> Unit) -> Unit
+    requestPermissions: (Array<String>, (Boolean) -> Unit) -> Unit,
+    pushInvite: PushInviteData? = null,
+    onPushInviteConsumed: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(true) }
@@ -235,12 +264,50 @@ fun ClubApp(
         if (s != null && m != null && rt != null) {
             CallController(appContext).also { ctrl ->
                 ctrl.permissionRequester = requestPermissions
+                ctrl.pushSender = { calleeId, cId, k ->
+                    scope.launch { ClubApi.sendCallPush(s, calleeId, cId, k) }
+                }
                 ctrl.start(s, m, rt, scope)
             }
         } else null
     }
     DisposableEffect(realtime) { onDispose { realtime?.disconnect() } }
     DisposableEffect(callController) { onDispose { callController?.stop() } }
+
+    // ── Phase 3.1: Firebase doorbell wiring ──────────────────────────
+    // Ask for the notification permission once signed in (Android 13+).
+    LaunchedEffect(session) {
+        if (session != null && android.os.Build.VERSION.SDK_INT >= 33) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS)) {}
+        }
+    }
+    // Register this phone's FCM token against the member (Part 12).
+    LaunchedEffect(session, me) {
+        val s = session; val m = me
+        if (s != null && m != null) {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token
+                .addOnSuccessListener { tok ->
+                    scope.launch { ClubApi.registerDeviceToken(s, m.id, tok) }
+                }
+        }
+    }
+    // A call invite delivered by push (app was closed) → ring for real.
+    LaunchedEffect(pushInvite, callController) {
+        val p = pushInvite; val cc = callController
+        if (p != null && cc != null) {
+            cc.onPushInvite(p)
+            onPushInviteConsumed()
+        } else if (p != null && !checking && session == null) {
+            onPushInviteConsumed()
+        }
+    }
+    // Once the call is no longer ringing, remove the push notification.
+    val callPhase = callController?.uiState?.phase
+    LaunchedEffect(callPhase) {
+        if (callPhase != null && callPhase != CallPhase.INCOMING) {
+            PushNotifier.clearCallNotification(appContext)
+        }
+    }
 
     // Personal background (Pranto): club artwork by default; a member's own
     // picked picture replaces it on THIS phone only (BackgroundStore).

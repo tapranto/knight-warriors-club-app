@@ -1,5 +1,7 @@
 package com.knightwarriorsclub.app.data
 
+import com.knightwarriorsclub.app.PushInviteData
+
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioManager
@@ -93,6 +95,10 @@ class CallController(private val context: Context) {
 
     /** Set by the activity: (permissions, callback(granted)) — runs the system prompt. */
     var permissionRequester: ((Array<String>, (Boolean) -> Unit) -> Unit)? = null
+
+    /** Phase 3.1: wired by MainActivity — also ring the callee's phones
+     *  via FCM (the Realtime invite alone only reaches an open app). */
+    var pushSender: ((calleeId: Long, callId: String, kind: String) -> Unit)? = null
 
     private val main = Handler(Looper.getMainLooper())
     private val audioManager =
@@ -226,6 +232,7 @@ class CallController(private val context: Context) {
                     }
                 )
             }
+            pushSender?.invoke(partnerMember.id, id, callKind)
             ringTimer = Runnable { if (!answered) endCallInternal("timeout") }
             main.postDelayed(ringTimer!!, RING_MS)
         }
@@ -237,6 +244,9 @@ class CallController(private val context: Context) {
         val fromObj = payload["from"]?.jsonObject ?: return
         val fromId = fromObj["id"]?.jsonPrimitive?.longOrNull ?: return
         val incCallId = payload["callId"]?.jsonPrimitive?.contentOrNull ?: return
+        // Same call arriving twice (Realtime invite + FCM push) — the
+        // second copy is not "busy", it is THIS call already ringing.
+        if (incCallId == callId) return
         val incKind =
             if (payload["kind"]?.jsonPrimitive?.contentOrNull == "video") "video" else "voice"
         if (uiState.phase != CallPhase.IDLE) {
@@ -268,6 +278,20 @@ class CallController(private val context: Context) {
             if (uiState.phase == CallPhase.INCOMING) endCallInternal("gone", silent = true)
         }
         main.postDelayed(ringTimer!!, CALLEE_RING_MS)
+    }
+
+    /** Phase 3.1: an invite that arrived by FCM push (app was closed).
+     *  Feeds the exact same incoming-call flow as a Realtime invite. */
+    fun onPushInvite(p: PushInviteData) {
+        onInvite(buildJsonObject {
+            put("callId", p.callId)
+            put("kind", p.kind)
+            put("from", buildJsonObject {
+                put("id", p.fromId)
+                put("name", p.fromName)
+                put("avatar_url", p.fromAvatar ?: "")
+            })
+        })
     }
 
     fun accept() {
