@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -84,7 +85,7 @@ val GlassRim = Color.White.copy(alpha = 0.38f)
 
 enum class Tab(val label: String, val icon: ImageVector) {
     Home("Home", Icons.Filled.Home),
-    News("News", Icons.Filled.Email),
+    News("News", Icons.Filled.Newspaper),
     Events("Events", Icons.Filled.Flag),
     More("More", Icons.Filled.Menu)
 }
