@@ -1,9 +1,11 @@
 package com.knightwarriorsclub.app
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,17 +26,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.BackgroundStore
 import com.knightwarriorsclub.app.data.Broadcast
+import com.knightwarriorsclub.app.data.ChatPrefs
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Dm
 import com.knightwarriorsclub.app.data.Member
 import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
+import com.knightwarriorsclub.app.data.Squad
+import com.knightwarriorsclub.app.data.SquadMsg
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -66,6 +74,14 @@ fun recordToDm(o: JsonObject): Dm? = runCatching {
         createdAt = o["created_at"]!!.jsonPrimitive.content
     )
 }.getOrNull()
+
+/** One row of the merged inbox list: a DM chat or a squad chat (v0.4.0). */
+private sealed interface InboxRow {
+    val timeIso: String
+
+    data class DmRow(val member: Member, override val timeIso: String) : InboxRow
+    data class SquadRow(val squad: Squad, val snippet: String?, override val timeIso: String) : InboxRow
+}
 
 @Composable
 fun InitialAvatar(name: String, size: Int = 44) {
@@ -155,17 +171,26 @@ fun LoginScreen(
 
 // ── Inbox ────────────────────────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun InboxScreen(
     session: Session, me: Member,
     realtime: RealtimeClient? = null,
     onOpenChat: (Member) -> Unit,
     onOpenEveryone: () -> Unit = {},
+    onOpenSquad: (Squad) -> Unit = {},
+    onOpenProfile: (Member) -> Unit = {},
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var members by remember { mutableStateOf<List<Member>>(emptyList()) }
     var unread by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var latest by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var mySquads by remember { mutableStateOf<List<Squad>>(emptyList()) }
+    var squadLatest by remember { mutableStateOf<Map<Long, SquadMsg?>>(emptyMap()) }
+    var blockedSet by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    var menuPartner by remember { mutableStateOf<Member?>(null) }
     var loaded by remember { mutableStateOf(false) }
     var refreshTick by remember { mutableStateOf(0) }
     var picking by remember { mutableStateOf(false) }
@@ -183,15 +208,43 @@ fun InboxScreen(
             members = ClubApi.allMembers(session).filter { it.id != me.id }
             unread = ClubApi.unreadCounts(session, me.id)
             latest = ClubApi.recentPartners(session, me.id)
+            blockedSet = ClubApi.myBlockedIds(session, me.id) +
+                    ClubApi.blockedByIds(session, me.id)
+            val squads = ClubApi.squadsOf(session, me.id).map { it.first }
+            mySquads = squads
+            val map = mutableMapOf<Long, SquadMsg?>()
+            squads.forEach { sq -> map[sq.id] = ClubApi.latestSquadMessage(session, sq.id) }
+            squadLatest = map
         }
         loaded = true
     }
 
     // Messenger rule (Pranto, 2026-11-01): the inbox lists ONLY members
     // you actually have a conversation with — everyone else is reached
-    // through the ✎ new-chat picker.
-    val withHistory = members.filter { latest.containsKey(it.id) }
-        .sortedByDescending { latest[it.id] }
+    // through the ✎ new-chat picker. v0.4.0: blocked members drop out,
+    // locally-deleted chats stay out until a newer message arrives, and
+    // squad chats merge into the same list (Pranto, 2026-11-02).
+    fun isHiddenNow(m: Member): Boolean {
+        val hiddenAt = ChatPrefs.hiddenAt(context, m.id)
+        if (hiddenAt == 0L) return false
+        val latestMs = latest[m.id]?.let {
+            runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull()
+        } ?: return true
+        return latestMs <= hiddenAt
+    }
+    val withHistory = members.filter {
+        latest.containsKey(it.id) && it.id !in blockedSet && !isHiddenNow(it)
+    }
+    val mergedRows: List<InboxRow> = (
+            withHistory.map { InboxRow.DmRow(it, latest[it.id] ?: "") } +
+                    mySquads.map { sq ->
+                        InboxRow.SquadRow(
+                            sq,
+                            squadLatest[sq.id]?.body,
+                            squadLatest[sq.id]?.createdAt ?: sq.createdAt
+                        )
+                    }
+            ).sortedByDescending { it.timeIso }
 
     if (picking) {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
@@ -208,10 +261,29 @@ fun InboxScreen(
                 }
             }
             Spacer(Modifier.height(12.dp))
+            // search the member list (Pranto's Point 3, 2026-11-02)
+            var pickQuery by remember { mutableStateOf("") }
+            OutlinedTextField(
+                value = pickQuery, onValueChange = { pickQuery = it },
+                placeholder = { Text("Search members…", color = Color(0xFFC4CEDC)) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                    focusedBorderColor = Gold, unfocusedBorderColor = GlassRim,
+                    cursorColor = GoldLight
+                )
+            )
+            Spacer(Modifier.height(12.dp))
+            val pickList = members.filter {
+                it.id !in blockedSet &&
+                        (pickQuery.isBlank() || it.fullName.contains(pickQuery, ignoreCase = true))
+            }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(members, key = { it.id }) { m ->
+                items(pickList, key = { it.id }) { m ->
                     GlassCard(Modifier.fillMaxWidth().clickable {
                         picking = false
+                        ChatPrefs.unhideChat(context, m.id)
                         onOpenChat(m)
                     }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -277,7 +349,7 @@ fun InboxScreen(
             Spacer(Modifier.height(12.dp))
             if (!loaded) {
                 Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
-            } else if (withHistory.isEmpty()) {
+            } else if (mergedRows.isEmpty()) {
                 Text(
                     "No chats yet. Tap the gold ✎ button to start your first chat.",
                     color = Color(0xFFC4CEDC), fontSize = 13.sp
@@ -287,30 +359,83 @@ fun InboxScreen(
                     Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(withHistory, key = { it.id }) { m ->
-                        GlassCard(Modifier.fillMaxWidth().clickable { onOpenChat(m) }) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                InitialAvatar(m.fullName)
-                                Spacer(Modifier.width(12.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                                    Text(
-                                        m.username?.let { "@$it" } ?: "Knight Warriors member",
-                                        color = Color(0xFFC4CEDC), fontSize = 11.sp
+                    items(mergedRows, key = { row ->
+                        when (row) {
+                            is InboxRow.DmRow -> "dm-${row.member.id}"
+                            is InboxRow.SquadRow -> "sq-${row.squad.id}"
+                        }
+                    }) { row ->
+                        when (row) {
+                            is InboxRow.DmRow -> {
+                                val m = row.member
+                                GlassCard(
+                                    Modifier.fillMaxWidth().combinedClickable(
+                                        onClick = {
+                                            ChatPrefs.unhideChat(context, m.id)
+                                            onOpenChat(m)
+                                        },
+                                        onLongClick = { menuPartner = m }
                                     )
-                                }
-                                val n = unread[m.id] ?: 0
-                                if (n > 0) {
-                                    Box(
-                                        Modifier.clip(CircleShape).background(Color(0xFFE23B3B))
-                                            .padding(horizontal = 8.dp, vertical = 3.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text("$n", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        InitialAvatar(m.fullName)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Text(
+                                                ChatPrefs.displayName(context, m),
+                                                color = Color.White,
+                                                fontWeight = FontWeight.SemiBold, fontSize = 15.sp
+                                            )
+                                            Text(
+                                                m.username?.let { "@$it" } ?: "Knight Warriors member",
+                                                color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                            )
+                                        }
+                                        val n = if (ChatPrefs.isMuted(context, m.id)) 0
+                                        else unread[m.id] ?: 0
+                                        if (n > 0) {
+                                            Box(
+                                                Modifier.clip(CircleShape).background(Color(0xFFE23B3B))
+                                                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("$n", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        } else {
+                                            Text(fmtTime(row.timeIso), color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                        }
                                     }
-                                } else {
-                                    latest[m.id]?.let {
-                                        Text(fmtTime(it), color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                }
+                            }
+                            is InboxRow.SquadRow -> {
+                                val sq = row.squad
+                                GlassCard(Modifier.fillMaxWidth().clickable { onOpenSquad(sq) }) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        InitialAvatar(sq.name)
+                                        Spacer(Modifier.width(12.dp))
+                                        Column(Modifier.weight(1f)) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Text(
+                                                    sq.name, color = Color.White,
+                                                    fontWeight = FontWeight.SemiBold, fontSize = 15.sp
+                                                )
+                                                if (sq.captainId == me.id) {
+                                                    Spacer(Modifier.width(8.dp))
+                                                    Box(
+                                                        Modifier.clip(RoundedCornerShape(8.dp)).background(Gold)
+                                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text("CAPTAIN", color = Ink, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                }
+                                            }
+                                            Text(
+                                                row.snippet ?: "Squad chat",
+                                                color = Color(0xFFC4CEDC), fontSize = 11.sp,
+                                                maxLines = 1
+                                            )
+                                        }
+                                        Text(fmtTime(row.timeIso), color = Color(0xFFC4CEDC), fontSize = 10.sp)
                                     }
                                 }
                             }
@@ -319,6 +444,38 @@ fun InboxScreen(
                     item { Spacer(Modifier.height(72.dp)) }
                 }
             }
+        }
+        // long-press a conversation → options (Pranto's Point 4, 2026-11-02)
+        menuPartner?.let { p ->
+            AlertDialog(
+                onDismissRequest = { menuPartner = null },
+                title = { Text(ChatPrefs.displayName(context, p)) },
+                text = {
+                    Column {
+                        TextButton(onClick = {
+                            menuPartner = null
+                            onOpenProfile(p)
+                        }) { Text("View profile") }
+                        TextButton(onClick = {
+                            menuPartner = null
+                            ChatPrefs.hideChat(context, p.id)
+                            refreshTick++
+                        }) { Text("Delete chat") }
+                        TextButton(onClick = {
+                            menuPartner = null
+                            scope.launch {
+                                ClubApi.blockMember(session, me.id, p.id)
+                                ChatPrefs.hideChat(context, p.id)
+                                refreshTick++
+                            }
+                        }) { Text("Block member") }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { menuPartner = null }) { Text("Cancel") }
+                }
+            )
         }
         // ✎ new chat — Messenger-style compose button
         Box(
@@ -393,8 +550,19 @@ fun ChatScreen(
     session: Session, me: Member, partner: Member,
     realtime: RealtimeClient? = null,
     onCall: (Member, String) -> Unit = { _, _ -> },
+    onOpenDetails: (Member) -> Unit = {},
     onBack: () -> Unit
 ) {
+    val context = LocalContext.current
+    var blockState by remember { mutableStateOf(false) }
+    val ownBubbleColor = listOf(
+        Color(0x40FFBE28), Color(0x404A90D9), Color(0x4040C060), Color(0x409060D0)
+    )[ChatPrefs.bubbleColour(context, partner.id)]
+    LaunchedEffect(partner.id) {
+        val blocked = ClubApi.myBlockedIds(session, me.id) +
+                ClubApi.blockedByIds(session, me.id)
+        blockState = blocked.contains(partner.id)
+    }
     val scope = rememberCoroutineScope()
     var messages by remember { mutableStateOf<List<Dm>>(emptyList()) }
     var input by remember { mutableStateOf("") }
@@ -509,7 +677,20 @@ fun ChatScreen(
             }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize()) {
+        // per-chat background (chat-details page): this chat's own picture
+        // wins over the app-wide background; drawn inside the chat only
+        val chatBg = remember(partner.id) { BackgroundStore.loadChatBitmap(context, partner.id) }
+        if (chatBg != null) {
+            Image(
+                bitmap = chatBg.asImageBitmap(),
+                contentDescription = null,
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(Modifier.fillMaxSize().background(Color(0x59060B14)))
+        }
+        Column(Modifier.fillMaxSize()) {
         // glass header strip
         Row(
             Modifier.fillMaxWidth()
@@ -524,14 +705,23 @@ fun ChatScreen(
                 modifier = Modifier.size(26.dp).clickable { onBack() }
             )
             Spacer(Modifier.width(10.dp))
-            InitialAvatar(partner.fullName, 38)
-            Spacer(Modifier.width(10.dp))
-            Column {
-                Text(partner.fullName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text(
-                    partner.username?.let { "@$it" } ?: "Knight Warriors member",
-                    color = Color(0xFFC4CEDC), fontSize = 11.sp
-                )
+            // tapping the name/avatar opens the chat-details page (Point 5)
+            Row(
+                Modifier.clickable { onOpenDetails(partner) },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                InitialAvatar(partner.fullName, 38)
+                Spacer(Modifier.width(10.dp))
+                Column {
+                    Text(
+                        ChatPrefs.displayName(context, partner),
+                        color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp
+                    )
+                    Text(
+                        partner.username?.let { "@$it" } ?: "Knight Warriors member",
+                        color = Color(0xFFC4CEDC), fontSize = 11.sp
+                    )
+                }
             }
             Spacer(Modifier.weight(1f))
             Icon(
@@ -571,7 +761,7 @@ fun ChatScreen(
                         Modifier.widthIn(max = 280.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
-                                if (mine) Color(0x40FFBE28) else Color.White.copy(alpha = 0.16f)
+                                if (mine) ownBubbleColor else Color.White.copy(alpha = 0.16f)
                             )
                             .border(1.dp, GlassRim, RoundedCornerShape(18.dp))
                             .padding(horizontal = 12.dp, vertical = 8.dp)
@@ -601,7 +791,14 @@ fun ChatScreen(
             )
         }
 
-        // floating glass input bar
+        // floating glass input bar (replaced by a notice when blocked)
+        if (blockState) {
+            Text(
+                "You can't reply to this conversation.",
+                color = Color(0xFFC4CEDC), fontSize = 12.sp,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
+            )
+        } else {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
                 .clip(RoundedCornerShape(26.dp))
@@ -643,6 +840,8 @@ fun ChatScreen(
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", tint = Ink, modifier = Modifier.size(20.dp))
             }
+        }
+        }
         }
     }
 }

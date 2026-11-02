@@ -36,7 +36,36 @@ data class Member(
     val id: Long,
     val fullName: String,
     val username: String?,
-    val avatarUrl: String?
+    val avatarUrl: String?,
+    val role: String = "Member",
+    val bio: String? = null,
+    val favouriteGame: String? = null,
+    val createdAt: String? = null
+)
+
+/** A squad (group chat) — Messenger-style since 2026-11-02: anyone can
+ *  create one, the creator is its Captain, one owned squad per member. */
+data class Squad(
+    val id: Long,
+    val name: String,
+    val game: String?,
+    val captainId: Long,
+    val createdAt: String
+)
+
+/** One member of a squad, with their squad role ('Captain' / 'Member'). */
+data class SquadMemberRow(
+    val member: Member,
+    val squadRole: String
+)
+
+/** One message inside a squad chat. */
+data class SquadMsg(
+    val id: Long,
+    val squadId: Long,
+    val senderId: Long,
+    val body: String,
+    val createdAt: String
 )
 
 /** One club broadcast — the "Everyone" room's content, posted by the President. */
@@ -277,15 +306,21 @@ object ClubApi {
         // contentOrNull, NOT content: a JSON null must stay null, otherwise
         // the UI prints the literal text "@null" (Pranto's screenshot, v0.3.0)
         username = o["username"]?.jsonPrimitive?.contentOrNull,
-        avatarUrl = o["avatar_url"]?.jsonPrimitive?.contentOrNull
+        avatarUrl = o["avatar_url"]?.jsonPrimitive?.contentOrNull,
+        role = o["role"]?.jsonPrimitive?.contentOrNull ?: "Member",
+        bio = o["bio"]?.jsonPrimitive?.contentOrNull,
+        favouriteGame = o["favourite_game"]?.jsonPrimitive?.contentOrNull,
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull
     )
+
+    private const val MEMBER_SELECT = "id,full_name,username,avatar_url,role,bio,favourite_game,created_at"
 
     /** The signed-in user's own member row (links auth user → member id). */
     suspend fun myMember(session: Session): Member? {
         val rows = restGet(
             session, "/rest/v1/members",
             mapOf(
-                "select" to "id,full_name,username,avatar_url",
+                "select" to MEMBER_SELECT,
                 "auth_user_id" to "eq.${session.authUserId}",
                 "limit" to "1"
             )
@@ -298,11 +333,44 @@ object ClubApi {
         val rows = restGet(
             session, "/rest/v1/members",
             mapOf(
-                "select" to "id,full_name,username,avatar_url",
+                "select" to MEMBER_SELECT,
                 "order" to "full_name.asc"
             )
         )
         return rows.map { toMember(it.jsonObject) }
+    }
+
+    /** One member by id — profile pages. */
+    suspend fun memberById(session: Session, id: Long): Member? {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/members",
+                mapOf("select" to MEMBER_SELECT, "id" to "eq.$id", "limit" to "1")
+            )
+            rows.firstOrNull()?.jsonObject?.let(::toMember)
+        }.getOrNull()
+    }
+
+    /** A member's games (names; uid/strength are the owner's own detail). */
+    suspend fun memberGames(session: Session, memberId: Long): List<Triple<String, String?, Int?>> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/member_games",
+                mapOf(
+                    "select" to "game,uid,team_strength",
+                    "member_id" to "eq.$memberId",
+                    "order" to "game.asc"
+                )
+            )
+            rows.map {
+                val o = it.jsonObject
+                Triple(
+                    o["game"]?.jsonPrimitive?.contentOrNull ?: "",
+                    o["uid"]?.jsonPrimitive?.contentOrNull,
+                    o["team_strength"]?.jsonPrimitive?.contentOrNull?.toIntOrNull()
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     /**
@@ -428,5 +496,286 @@ object ClubApi {
             )
             rows.groupingBy { it.jsonObject["sender_member_id"]!!.jsonPrimitive.long }.eachCount()
         }.getOrDefault(emptyMap())
+    }
+
+    // ---------- generic PATCH / DELETE helpers ----------
+
+    private suspend fun restPatch(
+        session: Session, path: String, params: Map<String, String>, payload: String
+    ): Pair<Int, String> {
+        val url = (ClubConfig.SUPABASE_URL + path).toHttpUrl().newBuilder().apply {
+            params.forEach { (k, v) -> addQueryParameter(k, v) }
+        }.build()
+        val req = baseHeaders(session.accessToken).url(url)
+            .addHeader("Prefer", "return=minimal")
+            .patch(payload.toRequestBody(JSON_MEDIA)).build()
+        return execute(req)
+    }
+
+    private suspend fun restDelete(
+        session: Session, path: String, params: Map<String, String>
+    ): Pair<Int, String> {
+        val url = (ClubConfig.SUPABASE_URL + path).toHttpUrl().newBuilder().apply {
+            params.forEach { (k, v) -> addQueryParameter(k, v) }
+        }.build()
+        val req = baseHeaders(session.accessToken).url(url).delete().build()
+        return execute(req)
+    }
+
+    // ---------- squads (Part 11 rules: open creation, one owned, Captain = creator) ----------
+
+    private fun toSquad(o: JsonObject) = Squad(
+        id = o["id"]!!.jsonPrimitive.long,
+        name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Squad",
+        game = o["game"]?.jsonPrimitive?.contentOrNull,
+        captainId = o["captain_member_id"]!!.jsonPrimitive.long,
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+    )
+
+    /** Squads a member belongs to, with their role in each — profile + squad list. */
+    suspend fun squadsOf(session: Session, memberId: Long): List<Pair<Squad, String>> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/squad_members",
+                mapOf(
+                    "select" to "role,squads(id,name,game,captain_member_id,created_at)",
+                    "member_id" to "eq.$memberId"
+                )
+            )
+            rows.mapNotNull {
+                val o = it.jsonObject
+                val sq = o["squads"]?.jsonObject ?: return@mapNotNull null
+                toSquad(sq) to (o["role"]?.jsonPrimitive?.contentOrNull ?: "Member")
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    /** The squad I captain, if any (one-owned rule). */
+    suspend fun myOwnedSquad(session: Session, me: Long): Squad? {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/squads",
+                mapOf(
+                    "select" to "id,name,game,captain_member_id,created_at",
+                    "captain_member_id" to "eq.$me",
+                    "limit" to "1"
+                )
+            )
+            rows.firstOrNull()?.jsonObject?.let(::toSquad)
+        }.getOrNull()
+    }
+
+    /** Create a squad: I am Captain automatically; picked members join as Member. */
+    suspend fun createSquad(
+        session: Session, me: Long, name: String, memberIds: List<Long>
+    ): Result<Squad> {
+        return runCatching {
+            val payload = buildJsonObject {
+                put("name", name); put("captain_member_id", me)
+            }
+            val (code, body) = restPost(
+                session, "/rest/v1/squads", payload.toString(), "return=representation"
+            )
+            if (code !in 200..299) {
+                if (code == 409 || body.contains("23505")) {
+                    throw IllegalStateException("You already lead a squad — disband it before creating another.")
+                }
+                throw IllegalStateException("Could not create the squad ($code)")
+            }
+            val squad = json.parseToJsonElement(body).jsonArray.firstOrNull()
+                ?.jsonObject?.let(::toSquad) ?: throw IllegalStateException("Could not create the squad")
+            val rows = buildJsonArray {
+                add(buildJsonObject {
+                    put("squad_id", squad.id); put("member_id", me); put("role", "Captain")
+                })
+                memberIds.filter { it != me }.forEach { mid ->
+                    add(buildJsonObject {
+                        put("squad_id", squad.id); put("member_id", mid); put("role", "Member")
+                    })
+                }
+            }
+            val (mCode, _) = restPost(session, "/rest/v1/squad_members", rows.toString())
+            if (mCode !in 200..299) throw IllegalStateException("Squad created, but members could not be added")
+            squad
+        }
+    }
+
+    /** Everyone in a squad, Captain first. */
+    suspend fun squadMembers(session: Session, squadId: Long): List<SquadMemberRow> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/squad_members",
+                mapOf(
+                    "select" to "role,members($MEMBER_SELECT)",
+                    "squad_id" to "eq.$squadId"
+                )
+            )
+            rows.mapNotNull {
+                val o = it.jsonObject
+                val m = o["members"]?.jsonObject ?: return@mapNotNull null
+                SquadMemberRow(toMember(m), o["role"]?.jsonPrimitive?.contentOrNull ?: "Member")
+            }.sortedWith(compareByDescending<SquadMemberRow> { it.squadRole == "Captain" }
+                .thenBy { it.member.fullName })
+        }.getOrDefault(emptyList())
+    }
+
+    /** One page of a squad chat, OLDEST FIRST (same display rule as DMs). */
+    suspend fun squadThreadPage(
+        session: Session, squadId: Long, beforeIso: String? = null, pageSize: Int = 100
+    ): List<SquadMsg> {
+        val params = mutableMapOf(
+            "select" to "id,squad_id,sender_member_id,body,created_at",
+            "squad_id" to "eq.$squadId",
+            "order" to "created_at.desc",
+            "limit" to pageSize.toString()
+        )
+        if (beforeIso != null) params["created_at"] = "lt.$beforeIso"
+        val rows = restGet(session, "/rest/v1/squad_messages", params)
+        return rows.map {
+            val o = it.jsonObject
+            SquadMsg(
+                id = o["id"]!!.jsonPrimitive.long,
+                squadId = o["squad_id"]!!.jsonPrimitive.long,
+                senderId = o["sender_member_id"]!!.jsonPrimitive.long,
+                body = o["body"]?.jsonPrimitive?.content ?: "",
+                createdAt = o["created_at"]!!.jsonPrimitive.content
+            )
+        }.reversed()
+    }
+
+    suspend fun sendSquadMessage(
+        session: Session, squadId: Long, me: Long, text: String
+    ): Result<Unit> {
+        val payload = buildJsonObject {
+            put("squad_id", squadId); put("sender_member_id", me); put("body", text)
+        }
+        return runCatching {
+            val (code, _) = restPost(session, "/rest/v1/squad_messages", payload.toString())
+            if (code !in 200..299) throw IllegalStateException("Send failed ($code)")
+            Unit
+        }
+    }
+
+    /** Newest message in a squad (inbox ordering/snippet); null when empty. */
+    suspend fun latestSquadMessage(session: Session, squadId: Long): SquadMsg? {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/squad_messages",
+                mapOf(
+                    "select" to "id,squad_id,sender_member_id,body,created_at",
+                    "squad_id" to "eq.$squadId",
+                    "order" to "created_at.desc",
+                    "limit" to "1"
+                )
+            )
+            rows.firstOrNull()?.jsonObject?.let {
+                SquadMsg(
+                    id = it["id"]!!.jsonPrimitive.long,
+                    squadId = it["squad_id"]!!.jsonPrimitive.long,
+                    senderId = it["sender_member_id"]!!.jsonPrimitive.long,
+                    body = it["body"]?.jsonPrimitive?.content ?: "",
+                    createdAt = it["created_at"]!!.jsonPrimitive.content
+                )
+            }
+        }.getOrNull()
+    }
+
+    suspend fun renameSquad(session: Session, squadId: Long, name: String): Result<Unit> {
+        val payload = buildJsonObject { put("name", name) }
+        return runCatching {
+            val (code, _) = restPatch(
+                session, "/rest/v1/squads", mapOf("id" to "eq.$squadId"), payload.toString()
+            )
+            if (code !in 200..299) throw IllegalStateException("Rename failed ($code)")
+            Unit
+        }
+    }
+
+    suspend fun addSquadMembers(
+        session: Session, squadId: Long, memberIds: List<Long>
+    ): Result<Unit> {
+        if (memberIds.isEmpty()) return Result.success(Unit)
+        val rows = buildJsonArray {
+            memberIds.forEach { mid ->
+                add(buildJsonObject {
+                    put("squad_id", squadId); put("member_id", mid); put("role", "Member")
+                })
+            }
+        }
+        return runCatching {
+            val (code, _) = restPost(session, "/rest/v1/squad_members", rows.toString())
+            if (code !in 200..299) throw IllegalStateException("Could not add members ($code)")
+            Unit
+        }
+    }
+
+    suspend fun removeSquadMember(
+        session: Session, squadId: Long, memberId: Long
+    ): Result<Unit> {
+        return runCatching {
+            val (code, _) = restDelete(
+                session, "/rest/v1/squad_members",
+                mapOf("squad_id" to "eq.$squadId", "member_id" to "eq.$memberId")
+            )
+            if (code !in 200..299) throw IllegalStateException("Remove failed ($code)")
+            Unit
+        }
+    }
+
+    /** Captain disbands: deleting the squad row cascades members + messages. */
+    suspend fun deleteSquad(session: Session, squadId: Long): Result<Unit> {
+        return runCatching {
+            val (code, _) = restDelete(
+                session, "/rest/v1/squads", mapOf("id" to "eq.$squadId")
+            )
+            if (code !in 200..299) throw IllegalStateException("Disband failed ($code)")
+            Unit
+        }
+    }
+
+    // ---------- member blocks (Part 11) — fail-soft until the SQL is run ----------
+
+    /** Members I have blocked. */
+    suspend fun myBlockedIds(session: Session, me: Long): Set<Long> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/member_blocks",
+                mapOf("select" to "blocked_member_id", "blocker_member_id" to "eq.$me")
+            )
+            rows.map { it.jsonObject["blocked_member_id"]!!.jsonPrimitive.long }.toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    /** Members who have blocked me (their chats/calls should not reach me either). */
+    suspend fun blockedByIds(session: Session, me: Long): Set<Long> {
+        return runCatching {
+            val rows = restGet(
+                session, "/rest/v1/member_blocks",
+                mapOf("select" to "blocker_member_id", "blocked_member_id" to "eq.$me")
+            )
+            rows.map { it.jsonObject["blocker_member_id"]!!.jsonPrimitive.long }.toSet()
+        }.getOrDefault(emptySet())
+    }
+
+    suspend fun blockMember(session: Session, me: Long, them: Long): Result<Unit> {
+        val payload = buildJsonObject {
+            put("blocker_member_id", me); put("blocked_member_id", them)
+        }
+        return runCatching {
+            val (code, _) = restPost(session, "/rest/v1/member_blocks", payload.toString())
+            if (code !in 200..299) throw IllegalStateException("Block failed ($code)")
+            Unit
+        }
+    }
+
+    suspend fun unblockMember(session: Session, me: Long, them: Long): Result<Unit> {
+        return runCatching {
+            val (code, _) = restDelete(
+                session, "/rest/v1/member_blocks",
+                mapOf("blocker_member_id" to "eq.$me", "blocked_member_id" to "eq.$them")
+            )
+            if (code !in 200..299) throw IllegalStateException("Unblock failed ($code)")
+            Unit
+        }
     }
 }

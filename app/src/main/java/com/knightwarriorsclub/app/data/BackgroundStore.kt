@@ -25,7 +25,33 @@ object BackgroundStore {
     fun hasCustom(context: Context): Boolean = customFile(context).exists()
 
     /** Downscale + save the picked image as this phone's background. */
-    suspend fun saveFromUri(context: Context, uri: Uri): Boolean = withContext(Dispatchers.IO) {
+    suspend fun saveFromUri(context: Context, uri: Uri): Boolean =
+        saveToFile(context, uri, customFile(context))
+
+    // ---------- per-chat backgrounds (chat-details page, v0.4.0) ----------
+    // A background chosen inside one conversation overrides the app-wide
+    // one in that chat only. Same rule: phone-only, never uploaded.
+
+    private fun chatFile(context: Context, partnerId: Long): File =
+        File(context.filesDir, "chat_bg_$partnerId.jpg")
+
+    fun hasChatCustom(context: Context, partnerId: Long): Boolean =
+        chatFile(context, partnerId).exists()
+
+    suspend fun saveChatFromUri(context: Context, uri: Uri, partnerId: Long): Boolean =
+        saveToFile(context, uri, chatFile(context, partnerId))
+
+    fun clearChat(context: Context, partnerId: Long) {
+        runCatching { chatFile(context, partnerId).delete() }
+    }
+
+    fun loadChatBitmap(context: Context, partnerId: Long): Bitmap? {
+        val f = chatFile(context, partnerId)
+        if (!f.exists()) return null
+        return runCatching { BitmapFactory.decodeFile(f.absolutePath) }.getOrNull()
+    }
+
+    private suspend fun saveToFile(context: Context, uri: Uri, target: File): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val resolver = context.contentResolver
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -42,7 +68,7 @@ object BackgroundStore {
             val bitmap: Bitmap = resolver.openInputStream(uri)?.use {
                 BitmapFactory.decodeStream(it, null, opts)
             } ?: return@runCatching false
-            FileOutputStream(customFile(context)).use { out ->
+            FileOutputStream(target).use { out ->
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out)
             }
             bitmap.recycle()

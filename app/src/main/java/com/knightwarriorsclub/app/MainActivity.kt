@@ -46,6 +46,7 @@ import com.knightwarriorsclub.app.data.Member
 import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
 import com.knightwarriorsclub.app.data.SessionStore
+import com.knightwarriorsclub.app.data.Squad
 import kotlinx.coroutines.launch
 
 /**
@@ -85,6 +86,14 @@ private sealed interface Screen {
     data object Inbox : Screen
     data object Everyone : Screen
     data class Chat(val partner: Member) : Screen
+    // v0.4.0 routes
+    data class Profile(val memberId: Long, val backTo: Screen) : Screen
+    data class ChatDetails(val partner: Member) : Screen
+    data object Squads : Screen
+    data object CreateSquad : Screen
+    data class SquadChat(val squad: Squad, val backTo: Screen) : Screen
+    data class SquadDetails(val squad: Squad, val backTo: Screen) : Screen
+    data class WebPage(val url: String, val title: String) : Screen
 }
 
 class MainActivity : ComponentActivity() {
@@ -155,6 +164,21 @@ fun ClubApp(
     BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Everyone) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
+    BackHandler(enabled = session != null && screen is Screen.ChatDetails) {
+        screen = Screen.Chat((screen as Screen.ChatDetails).partner)
+    }
+    BackHandler(enabled = session != null && screen is Screen.Profile) {
+        screen = (screen as Screen.Profile).backTo
+    }
+    BackHandler(enabled = session != null && screen is Screen.Squads) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.CreateSquad) { screen = Screen.Squads }
+    BackHandler(enabled = session != null && screen is Screen.SquadChat) {
+        screen = (screen as Screen.SquadChat).backTo
+    }
+    BackHandler(enabled = session != null && screen is Screen.SquadDetails) {
+        screen = (screen as Screen.SquadDetails).backTo
+    }
+    BackHandler(enabled = session != null && screen is Screen.WebPage) { screen = Screen.Tabs }
     BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
     // envelope badge = real unread DMs, refreshed when back on the tabs
@@ -282,6 +306,7 @@ fun ClubApp(
                             partner = scr.partner,
                             realtime = realtime,
                             onCall = { p, k -> callController?.startCall(p, k) },
+                            onOpenDetails = { screen = Screen.ChatDetails(it) },
                             onBack = { screen = Screen.Inbox }
                         )
                         is Screen.Inbox -> InboxScreen(
@@ -289,21 +314,76 @@ fun ClubApp(
                             realtime = realtime,
                             onOpenChat = { screen = Screen.Chat(it) },
                             onOpenEveryone = { screen = Screen.Everyone },
+                            onOpenSquad = { sq -> screen = Screen.SquadChat(sq, Screen.Inbox) },
+                            onOpenProfile = { m -> screen = Screen.Profile(m.id, Screen.Inbox) },
                             onBack = { screen = Screen.Tabs }
                         )
                         is Screen.Everyone -> EveryoneScreen(
                             session = s,
                             onBack = { screen = Screen.Inbox }
                         )
+                        is Screen.Profile -> MemberProfileScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            memberId = scr.memberId,
+                            onBack = { screen = scr.backTo },
+                            onMessage = { m -> screen = Screen.Chat(m) },
+                            onCall = { m, k -> callController?.startCall(m, k) }
+                        )
+                        is Screen.ChatDetails -> ChatDetailsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            partner = scr.partner,
+                            onBack = { screen = Screen.Chat(scr.partner) },
+                            onOpenProfile = {
+                                screen = Screen.Profile(scr.partner.id, scr)
+                            },
+                            onCall = { m, k -> callController?.startCall(m, k) },
+                            onHidden = { screen = Screen.Inbox }
+                        )
+                        is Screen.Squads -> SquadsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs },
+                            onCreate = { screen = Screen.CreateSquad },
+                            onOpenSquad = { sq -> screen = Screen.SquadChat(sq, Screen.Squads) }
+                        )
+                        is Screen.CreateSquad -> CreateSquadScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Squads },
+                            onCreated = { sq -> screen = Screen.SquadChat(sq, Screen.Squads) }
+                        )
+                        is Screen.SquadChat -> SquadChatScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            squad = scr.squad,
+                            realtime = realtime,
+                            onBack = { screen = scr.backTo },
+                            onOpenDetails = { screen = Screen.SquadDetails(scr.squad, scr) }
+                        )
+                        is Screen.SquadDetails -> SquadDetailsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            squad = scr.squad,
+                            onBack = { screen = scr.backTo },
+                            onGone = { screen = Screen.Squads }
+                        )
+                        is Screen.WebPage -> WebPageScreen(scr.url, scr.title) {
+                            screen = Screen.Tabs
+                        }
                         is Screen.Tabs -> {
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
                             Box(Modifier.weight(1f)) {
                                 when (tab) {
                                     Tab.Home -> HomeScreen()
-                                    Tab.News -> NewsScreen()
-                                    Tab.Events -> EventsScreen()
+                                    // hybrid (Pranto, 2026-11-02): News + Events are
+                                    // website pages shown inside the app
+                                    Tab.News -> WebPageView("https://knightwarriorsclub.com/#news")
+                                    Tab.Events -> WebPageView("https://knightwarriorsclub.com/#events")
                                     Tab.More -> MorePanel(
                                         me = myProfile,
+                                        onOpenProfile = { mid ->
+                                            screen = Screen.Profile(mid, Screen.Tabs)
+                                        },
+                                        onOpenSquads = { screen = Screen.Squads },
+                                        onOpenWeb = { url, title ->
+                                            screen = Screen.WebPage(url, title)
+                                        },
                                         hasCustomBg = customBg != null,
                                         onPickBackground = {
                                             bgPicker.launch(
@@ -529,6 +609,9 @@ private fun EventsScreen() {
 @Composable
 private fun MorePanel(
     me: Member?,
+    onOpenProfile: (Long) -> Unit = {},
+    onOpenSquads: () -> Unit = {},
+    onOpenWeb: (String, String) -> Unit = { _, _ -> },
     hasCustomBg: Boolean,
     onPickBackground: () -> Unit,
     onResetBackground: () -> Unit,
@@ -552,7 +635,9 @@ private fun MorePanel(
     ) {
         item { ScreenTitle("More", "Everything else in the club") }
         item {
-            GlassCard(Modifier.fillMaxWidth()) {
+            GlassCard(Modifier.fillMaxWidth().clickable(enabled = me != null) {
+                me?.let { onOpenProfile(it.id) }
+            }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (me != null) InitialAvatar(me.fullName, 46)
                     Spacer(Modifier.width(12.dp))
@@ -580,7 +665,17 @@ private fun MorePanel(
         ).forEach { (t, s) ->
             item {
                 GlassCard(Modifier.fillMaxWidth().clickable {
-                    if (t == "About the Club" || t == "Settings") section = t
+                    when (t) {
+                        "About the Club", "Settings" -> section = t
+                        "Profile" -> me?.let { onOpenProfile(it.id) }
+                        "My Squads" -> onOpenSquads()
+                        "Leaderboard" -> onOpenWeb(
+                            "https://knightwarriorsclub.com/#leaderboard", "Leaderboard"
+                        )
+                        "Tournaments" -> onOpenWeb(
+                            "https://knightwarriorsclub.com/#events", "Tournaments"
+                        )
+                    }
                 }) {
                     Text(t, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                     Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
