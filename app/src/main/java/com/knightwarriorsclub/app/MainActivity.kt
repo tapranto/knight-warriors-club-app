@@ -407,8 +407,12 @@ fun ClubApp(
                             onBack = { screen = scr.backTo },
                             onGone = { screen = Screen.Squads }
                         )
-                        is Screen.WebPage -> WebPageScreen(scr.url, scr.title) {
-                            screen = Screen.Tabs
+                        is Screen.WebPage -> Column(Modifier.fillMaxSize()) {
+                            // hybrid pages keep the APP header (logo, club
+                            // name, bell, envelope) — Pranto, 2026-11-02;
+                            // the Android Back button returns to the tabs
+                            ClubHeader(unreadTotal) { screen = Screen.Inbox }
+                            WebPageView(scr.url, Modifier.weight(1f).fillMaxWidth())
                         }
                         is Screen.Tabs -> {
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
@@ -718,6 +722,9 @@ private fun MorePanel(
                         )
                         "Tournaments" -> onOpenWeb(
                             "https://knightwarriorsclub.com/#events", "Tournaments"
+                        )
+                        "Tournament Maker" -> onOpenWeb(
+                            "https://knightwarriorsclub.com/#maker", "Tournament Maker"
                         )
                     }
                 }) {

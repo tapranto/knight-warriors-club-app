@@ -58,7 +58,8 @@ fun WebPageView(url: String, modifier: Modifier = Modifier) {
                                     document.head.appendChild(s);
                                   }
                                   s.textContent = '.site-head{display:none !important}' +
-                                    'main{padding-top:12px !important}';
+                                    'main{padding-top:12px !important}' +
+                                    'section{padding-top:16px !important}';
                                 })();
                                 """.trimIndent(),
                                 null
