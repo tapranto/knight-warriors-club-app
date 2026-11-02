@@ -311,7 +311,7 @@ fun InboxScreen(
                         onOpenChat(m)
                     }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            AvatarImage(url = m.avatarUrl, name = m.fullName)
+                            AvatarImage(url = m.avatarUrl, name = m.fullName, size = 44)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
@@ -402,7 +402,7 @@ fun InboxScreen(
                                     )
                                 ) {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
-                                        AvatarImage(url = m.avatarUrl, name = m.fullName)
+                                        AvatarImage(url = m.avatarUrl, name = m.fullName, size = 44)
                                         Spacer(Modifier.width(12.dp))
                                         Column(Modifier.weight(1f)) {
                                             Text(
