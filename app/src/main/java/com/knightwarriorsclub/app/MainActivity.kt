@@ -421,7 +421,15 @@ fun ClubApp(
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
                             Box(Modifier.weight(1f)) {
                                 when (tab) {
-                                    Tab.Home -> HomeScreen()
+                                    Tab.Home -> HomeScreen(
+                                        onOpenEvents = { tab = Tab.Events },
+                                        onOpenMaker = {
+                                            screen = Screen.WebPage(
+                                                "https://knightwarriorsclub.com/#maker",
+                                                "Tournament Maker"
+                                            )
+                                        }
+                                    )
                                     // hybrid (Pranto, 2026-11-02): News + Events are
                                     // website pages shown inside the app
                                     Tab.News -> WebPageView(
@@ -544,7 +552,10 @@ fun GlassCard(
 }
 
 @Composable
-private fun HomeScreen() {
+private fun HomeScreen(
+    onOpenEvents: () -> Unit = {},
+    onOpenMaker: () -> Unit = {}
+) {
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -560,6 +571,7 @@ private fun HomeScreen() {
                 // reaches Home is already a signed-in member
                 Box(
                     Modifier.clip(RoundedCornerShape(14.dp)).border(1.5.dp, Color.White, RoundedCornerShape(14.dp))
+                        .clickable { onOpenEvents() }
                         .padding(horizontal = 16.dp, vertical = 9.dp)
                 ) { Text("TOURNAMENTS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
@@ -575,17 +587,17 @@ private fun HomeScreen() {
             }
         }
         item {
-            GlassCard(Modifier.fillMaxWidth(), fill = Color(0x47FFBE28)) {
+            GlassCard(Modifier.fillMaxWidth().clickable { onOpenEvents() }, fill = Color(0x47FFBE28)) {
                 Text("♛  eFootball Tournament Legacy", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("Knockout • Registration is open", color = Color(0xFFFFF0C8), fontSize = 12.sp)
+                Text("Knockout • Registration is open — tap to open", color = Color(0xFFFFF0C8), fontSize = 12.sp)
             }
         }
         item {
             Text("LATEST NEWS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
-            GlassCard(Modifier.fillMaxWidth()) {
+            GlassCard(Modifier.fillMaxWidth().clickable { onOpenMaker() }) {
                 Text("Tournament Maker is live!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text("Create your own tournaments in the club app.", color = Color(0xFFE8EDF4), fontSize = 12.sp)
+                Text("Create your own tournaments in the club app — tap to open.", color = Color(0xFFE8EDF4), fontSize = 12.sp)
             }
         }
         item {
