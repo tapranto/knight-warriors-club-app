@@ -835,6 +835,7 @@ private fun MorePanel(
         }
         listOf(
             "Profile" to "Your member card & honours",
+            "Community" to "Meet the committee",
             "Leaderboard" to "Club rankings",
             "Tournaments" to "All club tournaments",
             "My Squads" to "Your teams",
@@ -847,6 +848,9 @@ private fun MorePanel(
                     when (t) {
                         "About the Club", "Settings" -> section = t
                         "Profile" -> me?.let { onOpenProfile(it.id) }
+                        "Community" -> onOpenWeb(
+                            "https://knightwarriorsclub.com/#community", "Community"
+                        )
                         "My Squads" -> onOpenSquads()
                         "Leaderboard" -> onOpenWeb(
                             "https://knightwarriorsclub.com/#leaderboard", "Leaderboard"
