@@ -124,8 +124,31 @@ class MainActivity : ComponentActivity() {
         pendingPermCallback = null
     }
 
+    /**
+     * Screen-off calls (Pranto, 2026-11-02): the full-screen intent
+     * fired and the phone rang, but with the screen off/locked the
+     * incoming-call page stayed hidden behind the lock screen — the
+     * activity was never flagged to show over the keyguard or to wake
+     * the display. Flag it when (and only when) we were launched by a
+     * call notification.
+     */
+    private fun applyCallScreenFlags(intent: Intent) {
+        if (!intent.hasExtra("kwc_open_call")) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        } else {
+            @Suppress("DEPRECATION")
+            window.addFlags(
+                android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                    android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+            )
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyCallScreenFlags(intent)
         pushInviteState.value = intent.toPushInvite()
         deepLinkState.value = intent.toDeepLink()
         val store = SessionStore(this)
@@ -162,6 +185,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        applyCallScreenFlags(intent)
         setIntent(intent)
         pushInviteState.value = intent.toPushInvite()
         deepLinkState.value = intent.toDeepLink()
