@@ -392,6 +392,55 @@ object ClubApi {
         return code in 200..299
     }
 
+    /** Tell the callee's phones the call ended unanswered (missed). */
+    suspend fun sendMissedPush(
+        session: Session, calleeMemberId: Long, callId: String, kind: String
+    ): Boolean = runCatching {
+        val payload = buildJsonObject {
+            put("callee_member_id", calleeMemberId)
+            put("call_id", callId)
+            put("kind", kind)
+            put("event", "missed")
+        }.toString()
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/send-call-push")
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        val (code, _) = execute(req)
+        code in 200..299
+    }.getOrDefault(false)
+
+    /** Knock the DM recipient's phone about a new message. */
+    suspend fun sendMessagePushDm(
+        session: Session, recipientMemberId: Long, preview: String
+    ): Boolean = runCatching {
+        val payload = buildJsonObject {
+            put("chat_kind", "dm")
+            put("recipient_member_id", recipientMemberId)
+            put("preview", preview.take(120))
+        }.toString()
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/send-message-push")
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        val (code, _) = execute(req)
+        code in 200..299
+    }.getOrDefault(false)
+
+    /** Knock every other squad member's phone about a new message. */
+    suspend fun sendMessagePushSquad(
+        session: Session, squadId: Long, preview: String
+    ): Boolean = runCatching {
+        val payload = buildJsonObject {
+            put("chat_kind", "squad")
+            put("squad_id", squadId)
+            put("preview", preview.take(120))
+        }.toString()
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/send-message-push")
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        val (code, _) = execute(req)
+        code in 200..299
+    }.getOrDefault(false)
+
     /** Ask Supabase to ring the callee's phones via FCM (send-call-push). */
     suspend fun sendCallPush(
         session: Session, calleeMemberId: Long, callId: String, kind: String

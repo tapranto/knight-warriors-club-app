@@ -63,6 +63,20 @@ object PushStore {
 
 object PushNotifier {
     const val CHANNEL_ID = "kwc_calls"
+    const val ALERTS_CHANNEL_ID = "kwc_alerts"
+    const val MESSAGES_CHANNEL_ID = "kwc_messages"
+
+    fun ensureMessagesChannel(
+        context: Context, nm: NotificationManager, id: String, label: String
+    ) {
+        if (Build.VERSION.SDK_INT < 26) return
+        if (nm.getNotificationChannel(id) != null) return
+        val channel = NotificationChannel(id, label, NotificationManager.IMPORTANCE_HIGH).apply {
+            description = label
+            enableVibration(true)
+        }
+        nm.createNotificationChannel(channel)
+    }
 
     fun showCallNotification(context: Context, data: PushInviteData) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
@@ -133,8 +147,14 @@ class KwcMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        val data = message.data
-        if (data["type"] != "call") return
+        when (message.data["type"]) {
+            "call" -> onCallPush(message.data)
+            "missed_call" -> onMissedPush(message.data)
+            "message" -> onChatMessagePush(message.data)
+        }
+    }
+
+    private fun onCallPush(data: Map<String, String>) {
         val callId = data["call_id"] ?: return
         val invite = PushInviteData(
             callId = callId,
@@ -144,5 +164,76 @@ class KwcMessagingService : FirebaseMessagingService() {
             kind = if (data["kind"] == "video") "video" else "voice"
         )
         PushNotifier.showCallNotification(this, invite)
+    }
+
+    /** The caller gave up: swap the ringing notification for a
+     *  persistent "Missed call" one that opens the chat. */
+    private fun onMissedPush(data: Map<String, String>) {
+        val callId = data["call_id"] ?: return
+        val fromId = data["from_id"]?.toLongOrNull() ?: return
+        val fromName = data["from_name"] ?: "Member"
+        val kind = if (data["kind"] == "video") "video" else "voice"
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel(callId.hashCode()) // stop the ringing notification
+        PushStore.clearCall(this)
+        PushNotifier.ensureMessagesChannel(this, nm, PushNotifier.ALERTS_CHANNEL_ID, "Missed calls")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("kwc_open_chat", fromId)
+        }
+        val pi = PendingIntent.getActivity(
+            this, ("missed_$callId").hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, PushNotifier.ALERTS_CHANNEL_ID)
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle("Missed call")
+            .setContentText("$fromName — $kind call")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(("missed_$callId").hashCode(), notif)
+    }
+
+    /** A chat message: notify unless the app is in the foreground
+     *  (Realtime already shows it live there). Tap opens the chat. */
+    private fun onChatMessagePush(data: Map<String, String>) {
+        if (isForeground()) return
+        val fromId = data["from_id"]?.toLongOrNull() ?: return
+        val fromName = data["from_name"] ?: "Member"
+        val preview = data["preview"] ?: ""
+        val squad = data["chat_kind"] == "squad"
+        val squadId = data["squad_id"]?.toLongOrNull() ?: 0L
+        val squadName = data["squad_name"] ?: "Squad"
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        PushNotifier.ensureMessagesChannel(this, nm, PushNotifier.MESSAGES_CHANNEL_ID, "Messages")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            if (squad) putExtra("kwc_open_squad", squadId)
+            else putExtra("kwc_open_chat", fromId)
+        }
+        val groupKey = if (squad) "msg_sq_$squadId" else "msg_dm_$fromId"
+        val pi = PendingIntent.getActivity(
+            this, groupKey.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val notif = NotificationCompat.Builder(this, PushNotifier.MESSAGES_CHANNEL_ID)
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(if (squad) squadName else fromName)
+            .setContentText(if (squad) "$fromName: $preview" else preview)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(if (squad) "$fromName: $preview" else preview))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setGroup(groupKey)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(groupKey.hashCode(), notif)
+    }
+
+    private fun isForeground(): Boolean {
+        val info = android.app.ActivityManager.RunningAppProcessInfo()
+        android.app.ActivityManager.getMyMemoryState(info)
+        return info.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
     }
 }

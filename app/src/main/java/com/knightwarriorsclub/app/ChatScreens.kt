@@ -876,6 +876,7 @@ fun ChatScreen(
                         scope.launch {
                             val res = ClubApi.sendDm(session, me.id, partner.id, text)
                             if (res.isSuccess) {
+                                ClubApi.sendMessagePushDm(session, partner.id, text)
                                 runCatching { loadLatest() }
                             } else {
                                 error = "Couldn't send — check connection and retry."

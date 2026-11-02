@@ -447,6 +447,7 @@ fun SquadChatScreen(
                         scope.launch {
                             val res = ClubApi.sendSquadMessage(session, squad.id, me.id, text)
                             if (res.isSuccess) {
+                                ClubApi.sendMessagePushSquad(session, squad.id, text)
                                 runCatching { loadLatest() }
                             } else {
                                 error = "Couldn't send — check connection and retry."

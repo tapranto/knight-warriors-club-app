@@ -100,6 +100,10 @@ class CallController(private val context: Context) {
      *  via FCM (the Realtime invite alone only reaches an open app). */
     var pushSender: ((calleeId: Long, callId: String, kind: String) -> Unit)? = null
 
+    /** Phase 3.1+: wired by MainActivity — leave a "Missed call"
+     *  notification on the callee's phone when a call ends unanswered. */
+    var missedPushSender: ((calleeId: Long, callId: String, kind: String) -> Unit)? = null
+
     private val main = Handler(Looper.getMainLooper())
     private val audioManager =
         context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -816,6 +820,15 @@ class CallController(private val context: Context) {
             }
             if (id != null) {
                 rt?.broadcast("kwc-call-$id", "bye", buildJsonObject {})
+            }
+        }
+        // Unanswered outgoing call → the callee keeps a missed-call
+        // notification on their phone (Pranto, 2026-11-02).
+        if (role == "caller" && !wasAnswered &&
+            (reason == "timeout" || reason == "cancelled")
+        ) {
+            endingPartner?.let { p ->
+                callId?.let { id -> missedPushSender?.invoke(p.id, id, endingKind) }
             }
         }
         writeCallLog(reason)

@@ -102,9 +102,14 @@ private sealed interface Screen {
     data class WebPage(val url: String, val title: String) : Screen
 }
 
+data class KwcDeepLink(val chatMemberId: Long = 0L, val squadId: Long = 0L)
+
 class MainActivity : ComponentActivity() {
     /** Phase 3.1: the latest call invite delivered by FCM push (if any). */
     private val pushInviteState = mutableStateOf<PushInviteData?>(null)
+
+    /** A notification tap asking to open a specific chat. */
+    private val deepLinkState = mutableStateOf<KwcDeepLink?>(null)
 
     private var pendingPermCallback: ((Boolean) -> Unit)? = null
     private val permLauncher = registerForActivityResult(
@@ -118,6 +123,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         pushInviteState.value = intent.toPushInvite()
+        deepLinkState.value = intent.toDeepLink()
         val store = SessionStore(this)
         setContent {
             // Dark club theme for ALL Material components (dialogs, menus,
@@ -142,7 +148,9 @@ class MainActivity : ComponentActivity() {
                         permLauncher.launch(perms)
                     },
                     pushInvite = pushInviteState.value,
-                    onPushInviteConsumed = { pushInviteState.value = null }
+                    onPushInviteConsumed = { pushInviteState.value = null },
+                    deepLink = deepLinkState.value,
+                    onDeepLinkConsumed = { deepLinkState.value = null }
                 )
             }
         }
@@ -152,7 +160,15 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         pushInviteState.value = intent.toPushInvite()
+        deepLinkState.value = intent.toDeepLink()
     }
+}
+
+private fun Intent?.toDeepLink(): KwcDeepLink? {
+    val chat = this?.getLongExtra("kwc_open_chat", 0L) ?: 0L
+    val squad = this?.getLongExtra("kwc_open_squad", 0L) ?: 0L
+    if (chat <= 0L && squad <= 0L) return null
+    return KwcDeepLink(chatMemberId = chat, squadId = squad)
 }
 
 private fun Intent?.toPushInvite(): PushInviteData? {
@@ -171,13 +187,31 @@ fun ClubApp(
     store: SessionStore,
     requestPermissions: (Array<String>, (Boolean) -> Unit) -> Unit,
     pushInvite: PushInviteData? = null,
-    onPushInviteConsumed: () -> Unit = {}
+    onPushInviteConsumed: () -> Unit = {},
+    deepLink: KwcDeepLink? = null,
+    onDeepLinkConsumed: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     var checking by remember { mutableStateOf(true) }
     var session by remember { mutableStateOf<Session?>(null) }
     var me by remember { mutableStateOf<Member?>(null) }
     var screen by remember { mutableStateOf<Screen>(Screen.Tabs) }
+
+    // Notification tap → open that chat (Phase 3.1+ deep link).
+    LaunchedEffect(deepLink, session, me) {
+        val d = deepLink; val s = session; val m = me
+        if (d != null && s != null && m != null) {
+            if (d.chatMemberId > 0) {
+                ClubApi.memberById(s, d.chatMemberId)?.let { screen = Screen.Chat(it) }
+            } else if (d.squadId > 0) {
+                ClubApi.squadsOf(s, m.id).firstOrNull { it.first.id == d.squadId }
+                    ?.let { screen = Screen.SquadChat(it.first, Screen.Inbox) }
+            }
+            onDeepLinkConsumed()
+        } else if (d != null && !checking && session == null) {
+            onDeepLinkConsumed()
+        }
+    }
     var tab by remember { mutableStateOf(Tab.Home) }
     var loginBusy by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
@@ -266,6 +300,9 @@ fun ClubApp(
                 ctrl.permissionRequester = requestPermissions
                 ctrl.pushSender = { calleeId, cId, k ->
                     scope.launch { ClubApi.sendCallPush(s, calleeId, cId, k) }
+                }
+                ctrl.missedPushSender = { calleeId, cId, k ->
+                    scope.launch { ClubApi.sendMissedPush(s, calleeId, cId, k) }
                 }
                 ctrl.start(s, m, rt, scope)
             }
