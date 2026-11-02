@@ -19,8 +19,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Flag
+import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Notifications
@@ -423,10 +426,19 @@ fun ClubApp(
                                 when (tab) {
                                     Tab.Home -> HomeScreen(
                                         onOpenEvents = { tab = Tab.Events },
+                                        onOpenNews = { tab = Tab.News },
+                                        onOpenInbox = { screen = Screen.Inbox },
+                                        onOpenSquads = { screen = Screen.Squads },
                                         onOpenMaker = {
                                             screen = Screen.WebPage(
                                                 "https://knightwarriorsclub.com/#maker",
                                                 "Tournament Maker"
+                                            )
+                                        },
+                                        onOpenLeaderboard = {
+                                            screen = Screen.WebPage(
+                                                "https://knightwarriorsclub.com/#leaderboard",
+                                                "Leaderboard"
                                             )
                                         }
                                     )
@@ -552,10 +564,48 @@ fun GlassCard(
 }
 
 @Composable
+private fun QuickTile(
+    icon: ImageVector, label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp))
+            .background(GlassFill)
+            .border(1.dp, GlassRim, RoundedCornerShape(18.dp))
+            .clickable { onClick() }
+            .padding(vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = label, tint = GoldLight, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(6.dp))
+        Text(label, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/**
+ * Home — redesigned 2026-11-02 (Pranto: duplicate doors "look idiotic").
+ * One element, one job: hero = identity (no button); ONE featured
+ * tournament card (live from the website's tournaments.json — a newly
+ * published tournament appears here with no app update); Quick Actions
+ * = four DIFFERENT doors; Latest News = the newest announcement
+ * headline, also live; About + Games = plain information.
+ */
+@Composable
 private fun HomeScreen(
     onOpenEvents: () -> Unit = {},
-    onOpenMaker: () -> Unit = {}
+    onOpenNews: () -> Unit = {},
+    onOpenInbox: () -> Unit = {},
+    onOpenSquads: () -> Unit = {},
+    onOpenMaker: () -> Unit = {},
+    onOpenLeaderboard: () -> Unit = {}
 ) {
+    var featured by remember { mutableStateOf<ClubApi.FeaturedTournament?>(null) }
+    var newsTitle by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        featured = ClubApi.featuredTournament()
+        newsTitle = ClubApi.latestAnnouncementTitle()
+    }
     LazyColumn(
         Modifier.fillMaxSize().padding(horizontal = 14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -566,14 +616,75 @@ private fun HomeScreen(
                 Text("CLUB", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 25.sp)
                 Spacer(Modifier.height(6.dp))
                 Text("Play together. Rise together.", color = Color(0xFFFFF4E4), fontSize = 13.sp)
-                Spacer(Modifier.height(14.dp))
-                // no JOIN button in-app (Pranto, 2026-11-01): anyone who
-                // reaches Home is already a signed-in member
-                Box(
-                    Modifier.clip(RoundedCornerShape(14.dp)).border(1.5.dp, Color.White, RoundedCornerShape(14.dp))
-                        .clickable { onOpenEvents() }
-                        .padding(horizontal = 16.dp, vertical = 9.dp)
-                ) { Text("TOURNAMENTS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            }
+        }
+        featured?.let { t ->
+            item {
+                Text("FEATURED TOURNAMENT", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                GlassCard(
+                    Modifier.fillMaxWidth().clickable { onOpenEvents() },
+                    fill = Color(0x47FFBE28)
+                ) {
+                    val running = t.status == "running" || t.status == "live"
+                    Box(
+                        Modifier.clip(RoundedCornerShape(10.dp))
+                            .background(if (running) Color(0xFF1E7A34) else Gold)
+                            .padding(horizontal = 9.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            if (running) "● RUNNING" else "REGISTRATION OPEN",
+                            color = if (running) Color.White else Ink,
+                            fontSize = 10.sp, fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "♛  ${t.name}", color = Color.White,
+                                fontWeight = FontWeight.Bold, fontSize = 16.sp
+                            )
+                            Text(
+                                listOfNotNull(
+                                    t.game.takeIf { it.isNotBlank() },
+                                    t.format?.replaceFirstChar { c -> c.uppercase() }
+                                ).joinToString(" • ") +
+                                        if (running) " • Live now" else " • Tap to join",
+                                color = Color(0xFFFFF0C8), fontSize = 12.sp
+                            )
+                        }
+                        Text("→", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 22.sp)
+                    }
+                }
+            }
+        }
+        item {
+            Text("QUICK ACTIONS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                QuickTile(Icons.Filled.Email, "Inbox", Modifier.weight(1f)) { onOpenInbox() }
+                QuickTile(Icons.Filled.Groups, "My Squads", Modifier.weight(1f)) { onOpenSquads() }
+                QuickTile(Icons.Filled.Edit, "Maker", Modifier.weight(1f)) { onOpenMaker() }
+                QuickTile(Icons.Filled.EmojiEvents, "Rankings", Modifier.weight(1f)) { onOpenLeaderboard() }
+            }
+        }
+        item {
+            Text("LATEST NEWS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Spacer(Modifier.height(6.dp))
+            GlassCard(Modifier.fillMaxWidth().clickable { onOpenNews() }) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            newsTitle ?: "Club News & Announcements",
+                            color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp
+                        )
+                        Text(
+                            "Tap to read the club news", color = Color(0xFFE8EDF4), fontSize = 12.sp
+                        )
+                    }
+                    Text("→", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                }
             }
         }
         item {
@@ -584,20 +695,6 @@ private fun HomeScreen(
                     "A brotherhood of passionate players — tournaments, practice, coaching and pure gaming fun since 2023.",
                     color = Color(0xFFFFF8EE), fontSize = 13.sp
                 )
-            }
-        }
-        item {
-            GlassCard(Modifier.fillMaxWidth().clickable { onOpenEvents() }, fill = Color(0x47FFBE28)) {
-                Text("♛  eFootball Tournament Legacy", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                Text("Knockout • Registration is open — tap to open", color = Color(0xFFFFF0C8), fontSize = 12.sp)
-            }
-        }
-        item {
-            Text("LATEST NEWS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Spacer(Modifier.height(6.dp))
-            GlassCard(Modifier.fillMaxWidth().clickable { onOpenMaker() }) {
-                Text("Tournament Maker is live!", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text("Create your own tournaments in the club app — tap to open.", color = Color(0xFFE8EDF4), fontSize = 12.sp)
             }
         }
         item {

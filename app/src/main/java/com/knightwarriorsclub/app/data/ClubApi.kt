@@ -376,6 +376,51 @@ object ClubApi {
         }.getOrDefault(emptyList())
     }
 
+    // ---------- website data files (Home's live cards) ----------
+
+    /** A club tournament from the website's data/tournaments.json. */
+    data class FeaturedTournament(
+        val name: String, val game: String, val format: String?, val status: String
+    )
+
+    private suspend fun fetchSiteJson(path: String): JsonObject? = runCatching {
+        val req = Request.Builder().url("https://knightwarriorsclub.com$path").get().build()
+        val (code, body) = execute(req)
+        if (code in 200..299) json.parseToJsonElement(body).jsonObject else null
+    }.getOrNull()
+
+    /**
+     * The tournament the Home page should feature — the same choice the
+     * website makes: a running one first, else the next upcoming one.
+     * Read live from the website's own data file, so publishing a new
+     * tournament updates the app with no new APK (Pranto, 2026-11-02).
+     */
+    suspend fun featuredTournament(): FeaturedTournament? {
+        val root = fetchSiteJson("/data/tournaments.json") ?: return null
+        val list = runCatching {
+            root["tournaments"]!!.jsonArray.map { it.jsonObject }
+        }.getOrDefault(emptyList())
+        fun pick(vararg statuses: String) = list.firstOrNull { o ->
+            (o["status"]?.jsonPrimitive?.contentOrNull ?: "") in statuses
+        }
+        val chosen = pick("running", "live") ?: pick("upcoming") ?: return null
+        return FeaturedTournament(
+            name = chosen["name"]?.jsonPrimitive?.contentOrNull ?: return null,
+            game = chosen["game"]?.jsonPrimitive?.contentOrNull ?: "",
+            format = chosen["format"]?.jsonPrimitive?.contentOrNull,
+            status = chosen["status"]?.jsonPrimitive?.contentOrNull ?: ""
+        )
+    }
+
+    /** The newest website announcement headline (Home's news card). */
+    suspend fun latestAnnouncementTitle(): String? {
+        val root = fetchSiteJson("/data/announcements.json") ?: return null
+        return runCatching {
+            root["announcements"]!!.jsonArray.firstOrNull()?.jsonObject
+                ?.get("title")?.jsonPrimitive?.contentOrNull
+        }.getOrNull()
+    }
+
     // ---------- profile editing (v0.4.0-beta3) ----------
 
     /** Update the signed-in member's own profile fields. */
