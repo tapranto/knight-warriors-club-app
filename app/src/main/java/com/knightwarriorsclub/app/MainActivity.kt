@@ -626,6 +626,14 @@ fun ClubApp(
                                 scr.url, Modifier.weight(1f).fillMaxWidth(),
                                 bridgeSession = s
                             )
+                            // Hybrid pages keep the bottom tab bar too
+                            // (Pranto, 2026-11-02: it vanished on Community
+                            // and Leaderboard opened from More). Tapping a
+                            // tab leaves the web page for that tab.
+                            GlassTabBar(tab) { chosen ->
+                                tab = chosen
+                                screen = Screen.Tabs
+                            }
                         }
                         is Screen.Tabs -> {
                             ClubHeader(unreadTotal) { screen = Screen.Inbox }
