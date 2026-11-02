@@ -281,6 +281,45 @@ fun ClubApp(
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS)) {}
         }
     }
+    // Android 14+: without the full-screen permission the doorbell rings
+    // but shows nothing — prompt once per app run until it is granted.
+    var fsiDismissed by remember(session) { mutableStateOf(false) }
+    val fsiGranted = if (android.os.Build.VERSION.SDK_INT >= 34) {
+        appContext.getSystemService(android.app.NotificationManager::class.java)
+            ?.canUseFullScreenIntent() ?: true
+    } else true
+    if (session != null && me != null && !fsiGranted && !fsiDismissed) {
+        AlertDialog(
+            onDismissRequest = { fsiDismissed = true },
+            title = { Text("Allow call alerts") },
+            text = {
+                Text(
+                    "Android is blocking incoming club calls from showing on your " +
+                        "screen when the app is closed — the call would ring silently " +
+                        "in the background. Allow full-screen alerts so calls pop up " +
+                        "like WhatsApp."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    fsiDismissed = true
+                    runCatching {
+                        appContext.startActivity(
+                            android.content.Intent(
+                                android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT
+                            ).setData(android.net.Uri.parse("package:" + appContext.packageName))
+                                .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }) { Text("OPEN SETTINGS", color = GoldLight) }
+            },
+            dismissButton = {
+                TextButton(onClick = { fsiDismissed = true }) {
+                    Text("Later", color = Color(0xFFC4CEDC))
+                }
+            }
+        )
+    }
     // Register this phone's FCM token against the member (Part 12).
     LaunchedEffect(session, me) {
         val s = session; val m = me

@@ -90,6 +90,7 @@ object PushNotifier {
             .setCategory(NotificationCompat.CATEGORY_CALL)
             .setFullScreenIntent(pi, true)
             .setContentIntent(pi)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
             .setTimeoutAfter(35_000)

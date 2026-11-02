@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -154,6 +155,7 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item { PageHeader("Settings", "Make the app yours", onBack) }
+        item { CallAlertsCard() }
         item {
             GlassCard(Modifier.fillMaxWidth()) {
                 Text("App background", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
@@ -203,5 +205,51 @@ fun SettingsScreen(
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
+    }
+}
+
+
+/**
+ * Phase 3.1 fix (2026-11-02): Android 14+ only lets a call take over the
+ * whole screen with the member's explicit full-screen permission. The
+ * push rang but nothing showed on Pranto's phone without it — this card
+ * shows the current state and opens the system toggle.
+ */
+@Composable
+fun CallAlertsCard() {
+    val context = LocalContext.current
+    val granted = if (android.os.Build.VERSION.SDK_INT >= 34) {
+        context.getSystemService(android.app.NotificationManager::class.java)
+            ?.canUseFullScreenIntent() ?: false
+    } else true
+    GlassCard(Modifier.fillMaxWidth()) {
+        Text("Call alerts", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            if (granted)
+                "Incoming calls can take over your screen when the app is closed. All set."
+            else
+                "Android is blocking incoming calls from taking over your screen, so a call " +
+                    "rings in the background without showing who is calling. Allow it here.",
+            color = Color(0xFFE8EDF4), fontSize = 12.sp
+        )
+        if (!granted) {
+            Spacer(Modifier.height(12.dp))
+            Box(
+                Modifier.clip(RoundedCornerShape(14.dp)).background(Gold)
+                    .clickable {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT
+                                ).setData(android.net.Uri.parse("package:" + context.packageName))
+                            )
+                        }
+                    }
+                    .padding(horizontal = 16.dp, vertical = 9.dp)
+            ) {
+                Text("ALLOW FULL-SCREEN ALERTS", color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        }
     }
 }
