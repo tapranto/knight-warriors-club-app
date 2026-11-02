@@ -708,9 +708,22 @@ private fun DmBanner(
     onTap: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Box(modifier.padding(horizontal = 12.dp).padding(top = 8.dp)) {
-        GlassCard(
-            Modifier.fillMaxWidth().clickable { onTap() }
+    Box(modifier.padding(horizontal = 12.dp).padding(top = 10.dp)) {
+        // Frosted, more solid than the standard glass card (Pranto,
+        // 2026-11-02: "more blur shape") — deep-tinted fill, bright rim,
+        // wide soft corners, floating shadow.
+        Box(
+            Modifier.fillMaxWidth()
+                .shadow(14.dp, RoundedCornerShape(24.dp))
+                .clip(RoundedCornerShape(24.dp))
+                .background(
+                    androidx.compose.ui.graphics.Brush.verticalGradient(
+                        listOf(Color(0xF2243247), Color(0xF2141E2C))
+                    )
+                )
+                .border(1.5.dp, Color.White.copy(alpha = 0.45f), RoundedCornerShape(24.dp))
+                .clickable { onTap() }
+                .padding(horizontal = 14.dp, vertical = 10.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 AvatarImage(url = sender.avatarUrl, name = sender.fullName, size = 38)
