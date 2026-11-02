@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.EmojiEvents
@@ -41,6 +42,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.knightwarriorsclub.app.data.BackgroundStore
@@ -52,6 +54,7 @@ import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
 import com.knightwarriorsclub.app.data.SessionStore
 import com.knightwarriorsclub.app.data.Squad
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -309,6 +312,36 @@ fun ClubApp(
         } else null
     }
     DisposableEffect(realtime) { onDispose { realtime?.disconnect() } }
+
+    // Live message feed (beta19, Pranto 2026-11-02): the badge used to
+    // refresh only when he navigated, so new DMs surfaced late. Now the
+    // app holds one always-on insert subscription: the moment a DM for
+    // me lands, the envelope badge updates and — unless I am already in
+    // that chat — a banner drops in, WhatsApp-style.
+    var dmBanner by remember(session, me) { mutableStateOf<Pair<Member, String>?>(null) }
+    DisposableEffect(session, me, realtime) {
+        val s = session; val m = me; val rt = realtime
+        if (s == null || m == null || rt == null) return@DisposableEffect onDispose {}
+        val channel = "kwc-home-feed-" + m.id
+        rt.joinInserts(channel, "direct_messages") { record ->
+            val dm = recordToDm(record) ?: return@joinInserts
+            if (dm.recipientId != m.id) return@joinInserts
+            scope.launch {
+                unreadTotal = runCatching {
+                    ClubApi.unreadCounts(s, m.id).values.sum()
+                }.getOrDefault(unreadTotal)
+                val inThatChat = (screen as? Screen.Chat)?.partner?.id == dm.senderId
+                if (!inThatChat && !dm.body.startsWith("\uD83D\uDCDE")) {
+                    ClubApi.memberById(s, dm.senderId)?.let { sender ->
+                        dmBanner = sender to dm.body
+                        delay(4500)
+                        if (dmBanner?.first?.id == sender.id) dmBanner = null
+                    }
+                }
+            }
+        }
+        onDispose { rt.leave(channel) }
+    }
     DisposableEffect(callController) { onDispose { callController?.stop() } }
 
     // ── Phase 3.1: Firebase doorbell wiring ──────────────────────────
@@ -642,10 +675,67 @@ fun ClubApp(
             }
         }
 
+        // live DM banner (beta19): drops in over any screen but calls
+        val bannerNow = dmBanner
+        if (session != null && bannerNow != null && callController?.uiState?.phase == CallPhase.IDLE) {
+            DmBanner(
+                sender = bannerNow.first,
+                preview = bannerNow.second,
+                modifier = Modifier.align(Alignment.TopCenter).statusBarsPadding(),
+                onTap = {
+                    dmBanner = null
+                    screen = Screen.Chat(bannerNow.first)
+                },
+                onDismiss = { dmBanner = null }
+            )
+        }
+
         // the call overlay floats above everything while a call is active
         val cc = callController
         if (cc != null && cc.uiState.phase != CallPhase.IDLE) {
             CallOverlay(cc)
+        }
+    }
+}
+
+/** WhatsApp-style in-app banner for a DM arriving while the app is open. */
+@Composable
+private fun DmBanner(
+    sender: Member,
+    preview: String,
+    modifier: Modifier = Modifier,
+    onTap: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(modifier.padding(horizontal = 12.dp).padding(top = 8.dp)) {
+        GlassCard(
+            Modifier.fillMaxWidth().clickable { onTap() }
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AvatarImage(url = sender.avatarUrl, name = sender.fullName, size = 38)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        sender.fullName, color = Color.White,
+                        fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        preview, color = Color(0xFFC4CEDC), fontSize = 12.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Box(
+                    Modifier.size(30.dp).clip(CircleShape)
+                        .clickable { onDismiss() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Close, contentDescription = "Dismiss",
+                        tint = Color(0xFFC4CEDC), modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
         }
     }
 }
