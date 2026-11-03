@@ -1371,19 +1371,60 @@ private fun MorePanel(
                         )
                     }
                 }) {
-                    Text(t, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        MoreThumbArt(moreThumb(t))
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(t, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(s, color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                        }
+                    }
                 }
             }
         }
         item {
             GlassCard(Modifier.fillMaxWidth().clickable { onLogout() }) {
-                Text("Log out", color = Color(0xFFFF9B9B), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                Text("Sign out of this device", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    MoreThumbArt(R.drawable.thumb_logout)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("Log out", color = Color(0xFFFF9B9B), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text("Sign out of this device", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+                    }
+                }
             }
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
+}
+
+/** beta50 (Pranto): every More row carries a small circular club-art
+ *  thumbnail beside its name. The art ships inside the APK (66 KB for
+ *  the whole set), generated in the club's teal-and-gold night style. */
+private fun moreThumb(title: String): Int = when (title) {
+    "Club Feed" -> R.drawable.thumb_feed
+    "Polls & MVP" -> R.drawable.thumb_polls
+    "My Squads" -> R.drawable.thumb_mysquads
+    "All Squads" -> R.drawable.thumb_allsquads
+    "President Console" -> R.drawable.thumb_console
+    "Community" -> R.drawable.thumb_community
+    "Leaderboard" -> R.drawable.thumb_leaderboard
+    "Tournaments" -> R.drawable.thumb_tournaments
+    "Tournament Maker" -> R.drawable.thumb_maker
+    "About the Club" -> R.drawable.thumb_about
+    "Settings" -> R.drawable.thumb_settings
+    else -> R.drawable.club_logo
+}
+
+@Composable
+private fun MoreThumbArt(resId: Int) {
+    Image(
+        painter = painterResource(resId),
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.size(44.dp).clip(CircleShape)
+            .border(1.5.dp, GoldLight, CircleShape)
+    )
 }
 
 @Composable
