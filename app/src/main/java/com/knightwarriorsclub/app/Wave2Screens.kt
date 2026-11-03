@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -375,19 +376,62 @@ fun PollsScreen(
     }
     if (createBallotOpen) {
         var title by remember { mutableStateOf("") }
+        // Part 20 (Pranto): the President picks a few nominees;
+        // everyone votes among them only
+        var nominees by remember { mutableStateOf<Set<Long>>(emptySet()) }
+        var pickingNominees by remember { mutableStateOf(false) }
         AlertDialog(
             onDismissRequest = { createBallotOpen = false },
             title = { Text("New MVP ballot") },
             text = {
-                ClubTextField("Title — e.g. MVP of November", title, onChange = { title = it })
+                Column {
+                    ClubTextField("Title — e.g. MVP of November", title, onChange = { title = it })
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        "Nominees — you choose who can be voted for",
+                        color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    nominees.mapNotNull { id -> members.firstOrNull { it.id == id } }
+                        .forEach { cand ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    cand.fullName, color = Color(0xFFE8EDF4),
+                                    fontSize = 13.sp, modifier = Modifier.weight(1f)
+                                )
+                                Text(
+                                    "✕", color = Color(0xFFFF9B9B), fontSize = 13.sp,
+                                    modifier = Modifier.clickable {
+                                        nominees = nominees - cand.id
+                                    }.padding(6.dp)
+                                )
+                            }
+                        }
+                    TextButton(onClick = { pickingNominees = true }) {
+                        Text("＋ SELECT NOMINEES", color = GoldLight)
+                    }
+                    Text(
+                        if (nominees.size < 2)
+                            "Pick at least 2 nominees (now: ${nominees.size})"
+                        else
+                            "${nominees.size} nominees — ready",
+                        color = if (nominees.size < 2) Color(0xFFFF9B9B) else Color(0xFF9BE29B),
+                        fontSize = 11.sp
+                    )
+                }
             },
             confirmButton = {
                 TextButton(
-                    enabled = title.isNotBlank(),
+                    enabled = title.isNotBlank() && nominees.size >= 2,
                     onClick = {
                         createBallotOpen = false
                         scope.launch {
-                            val res = ClubApi.createBallot(session, me.id, title.trim())
+                            val res = ClubApi.createBallot(
+                                session, me.id, title.trim(), nominees.toList()
+                            )
                             if (res.isSuccess) {
                                 ClubApi.notifyAllMembers(
                                     session,
@@ -398,7 +442,14 @@ fun PollsScreen(
                                     session, "🏆 MVP voting is open", title.trim()
                                 )
                                 load()
-                            } else note = "Ballot creation failed."
+                            } else {
+                                note = if (res.exceptionOrNull()?.message
+                                        ?.contains("nominee_ids") == true
+                                ) {
+                                    "This needs the Part 20 database update — " +
+                                        "run part20 in the Supabase SQL Editor first."
+                                } else "Ballot creation failed."
+                            }
                         }
                     }
                 ) { Text("CREATE") }
@@ -407,14 +458,67 @@ fun PollsScreen(
                 TextButton(onClick = { createBallotOpen = false }) { Text("Cancel") }
             }
         )
+        if (pickingNominees) {
+            var query by remember { mutableStateOf("") }
+            val matches = if (query.isBlank()) emptyList() else members.filter {
+                it.fullName.contains(query, ignoreCase = true) ||
+                    (it.username?.contains(query, ignoreCase = true) == true)
+            }
+            AlertDialog(
+                onDismissRequest = { pickingNominees = false },
+                title = { Text("Pick nominees") },
+                text = {
+                    Column {
+                        ClubTextField(
+                            "Search members", query, onChange = { query = it },
+                            placeholder = "Type a name or @username"
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        if (query.isBlank()) {
+                            Text(
+                                "Type a name to find a member.",
+                                color = Color(0xFFC4CEDC), fontSize = 12.sp
+                            )
+                        }
+                        LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                            items(matches, key = { it.id }) { cand ->
+                                Row(
+                                    Modifier.fillMaxWidth().clickable {
+                                        nominees = if (cand.id in nominees)
+                                            nominees - cand.id else nominees + cand.id
+                                    }.padding(vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = cand.id in nominees,
+                                        onCheckedChange = {
+                                            nominees = if (it)
+                                                nominees + cand.id else nominees - cand.id
+                                        }
+                                    )
+                                    Text(cand.fullName, color = Color.White, fontSize = 14.sp)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { pickingNominees = false }) {
+                        Text("DONE (${nominees.size})")
+                    }
+                }
+            )
+        }
     }
     voteForBallot?.let { ballot ->
         AlertDialog(
             onDismissRequest = { voteForBallot = null },
             title = { Text("Vote — ${ballot.title}") },
             text = {
+                val candidates = if (ballot.nomineeIds.isEmpty()) members
+                    else members.filter { it.id in ballot.nomineeIds }
                 LazyColumn(Modifier.heightIn(max = 380.dp)) {
-                    items(members, key = { it.id }) { cand ->
+                    items(candidates, key = { it.id }) { cand ->
                         Text(
                             cand.fullName, color = Color.White, fontSize = 14.sp,
                             modifier = Modifier.fillMaxWidth().clickable {

@@ -1756,20 +1756,26 @@ object ClubApi {
         check(code in 200..299) { "vote failed: $code" }
     }
 
-    data class MvpBallot(val id: Long, val title: String, val createdAt: String)
+    data class MvpBallot(
+        val id: Long, val title: String, val createdAt: String,
+        // Part 20: the President's chosen nominees; empty = open ballot
+        val nomineeIds: List<Long> = emptyList()
+    )
     data class MvpVote(val ballotId: Long, val nomineeId: Long, val voterId: Long)
 
     suspend fun mvpBallots(session: Session): List<MvpBallot> = runCatching {
         val rows = restGet(
             session, "/rest/v1/mvp_ballots",
-            mapOf("select" to "id,title,created_at", "order" to "created_at.desc", "limit" to "10")
+            mapOf("select" to "id,title,created_at,nominee_ids", "order" to "created_at.desc", "limit" to "10")
         )
         rows.map {
             val o = it.jsonObject
             MvpBallot(
                 id = o["id"]!!.jsonPrimitive.long,
                 title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
-                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: "",
+                nomineeIds = o["nominee_ids"]?.jsonArray
+                    ?.mapNotNull { it.jsonPrimitive.longOrNull } ?: emptyList()
             )
         }
     }.getOrDefault(emptyList())
@@ -1789,13 +1795,16 @@ object ClubApi {
         }
     }.getOrDefault(emptyList())
 
-    suspend fun createBallot(session: Session, me: Long, title: String): Result<Unit> =
+    suspend fun createBallot(
+        session: Session, me: Long, title: String, nomineeIds: List<Long>
+    ): Result<Unit> =
         runCatching {
             val payload = buildJsonObject {
                 put("title", title); put("created_by", me)
+                put("nominee_ids", buildJsonArray { nomineeIds.forEach { add(it) } })
             }
-            val (code, _) = restPost(session, "/rest/v1/mvp_ballots", payload.toString())
-            check(code in 200..299) { "ballot create failed: $code" }
+            val (code, body) = restPost(session, "/rest/v1/mvp_ballots", payload.toString())
+            check(code in 200..299) { "ballot create failed: $code $body" }
         }
 
     suspend fun deleteBallot(session: Session, ballotId: Long): Result<Unit> = runCatching {
