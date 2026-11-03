@@ -52,7 +52,9 @@ data class Squad(
     val name: String,
     val game: String?,
     val captainId: Long,
-    val createdAt: String
+    val createdAt: String,
+    val avatarUrl: String? = null,
+    val motto: String? = null
 )
 
 /** One member of a squad, with their squad role ('Captain' / 'Member'). */
@@ -748,7 +750,9 @@ object ClubApi {
         name = o["name"]?.jsonPrimitive?.contentOrNull ?: "Squad",
         game = o["game"]?.jsonPrimitive?.contentOrNull,
         captainId = o["captain_member_id"]!!.jsonPrimitive.long,
-        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: "",
+        avatarUrl = o["avatar_url"]?.jsonPrimitive?.contentOrNull,
+        motto = o["motto"]?.jsonPrimitive?.contentOrNull
     )
 
     /** Squads a member belongs to, with their role in each — profile + squad list. */
@@ -757,7 +761,7 @@ object ClubApi {
             val rows = restGet(
                 session, "/rest/v1/squad_members",
                 mapOf(
-                    "select" to "role,squads(id,name,game,captain_member_id,created_at)",
+                    "select" to "role,squads(id,name,game,captain_member_id,created_at,avatar_url,motto)",
                     "member_id" to "eq.$memberId"
                 )
             )
@@ -775,7 +779,7 @@ object ClubApi {
             val rows = restGet(
                 session, "/rest/v1/squads",
                 mapOf(
-                    "select" to "id,name,game,captain_member_id,created_at",
+                    "select" to "id,name,game,captain_member_id,created_at,avatar_url,motto",
                     "captain_member_id" to "eq.$me",
                     "limit" to "1"
                 )
@@ -815,8 +819,80 @@ object ClubApi {
             }
             val (mCode, _) = restPost(session, "/rest/v1/squad_members", rows.toString())
             if (mCode !in 200..299) throw IllegalStateException("Squad created, but members could not be added")
+            // Tell the added members — bell notification (Part 15 RPC) + phone
+            // push — so nobody discovers the squad by accident (Pranto, 2026-11-03).
+            val targets = memberIds.filter { it != me }
+            for (t in targets) notifySquadAdded(session, squad.id, t)
+            if (targets.isNotEmpty()) {
+                sendMessagePushSquad(
+                    session, squad.id,
+                    "👋 You were added to “${name.trim()}” — tap to say hello"
+                )
+            }
             squad
         }
+    }
+
+    /**
+     * Bell notification for a member who was just added to a squad
+     * (Part 15's security-definer RPC — direct inserts into notifications
+     * are President-only). Fail-soft: before Part 15 runs, this no-ops.
+     */
+    suspend fun notifySquadAdded(session: Session, squadId: Long, memberId: Long): Boolean =
+        runCatching {
+            val payload = buildJsonObject {
+                put("p_squad_id", squadId); put("p_member_id", memberId)
+            }
+            val (code, _) = restPost(
+                session, "/rest/v1/rpc/notify_squad_added", payload.toString()
+            )
+            code in 200..299
+        }.getOrDefault(false)
+
+    /** Captain edits the squad's profile: name and/or motto (Part 15 columns). */
+    suspend fun updateSquadInfo(
+        session: Session, squadId: Long, name: String, motto: String?
+    ): Result<Unit> {
+        val payload = buildJsonObject {
+            put("name", name)
+            if (motto == null) put("motto", kotlinx.serialization.json.JsonNull)
+            else put("motto", motto)
+        }
+        return runCatching {
+            val (code, _) = restPatch(
+                session, "/rest/v1/squads", mapOf("id" to "eq.$squadId"), payload.toString()
+            )
+            if (code !in 200..299) throw IllegalStateException("Squad update failed ($code)")
+            Unit
+        }
+    }
+
+    /**
+     * Captain uploads the squad picture: stored under the captain's own
+     * storage folder (the bucket's rule) in the avatars bucket, then the
+     * squad row is pointed at it (Part 15's avatar_url; captain RLS covers
+     * the update). Returns the public URL.
+     */
+    suspend fun uploadSquadAvatar(
+        session: Session, squadId: Long, jpegBytes: ByteArray
+    ): Result<String> = runCatching {
+        val path = "${session.authUserId}/squad-$squadId-${System.currentTimeMillis()}.jpg"
+        val req = Request.Builder()
+            .url(ClubConfig.SUPABASE_URL + "/storage/v1/object/avatars/$path")
+            .addHeader("apikey", ClubConfig.SUPABASE_PUBLISHABLE_KEY)
+            .addHeader("Authorization", "Bearer ${session.accessToken}")
+            .addHeader("x-upsert", "true")
+            .post(jpegBytes.toRequestBody("image/jpeg".toMediaType()))
+            .build()
+        val (code, body) = execute(req)
+        check(code in 200..299) { "squad photo upload failed (HTTP $code): ${body.take(160)}" }
+        val url = ClubConfig.SUPABASE_URL + "/storage/v1/object/public/avatars/" + path
+        val payload = buildJsonObject { put("avatar_url", url) }
+        val (pCode, _) = restPatch(
+            session, "/rest/v1/squads", mapOf("id" to "eq.$squadId"), payload.toString()
+        )
+        check(pCode in 200..299) { "squad photo link failed (HTTP $pCode)" }
+        url
     }
 
     /** Everyone in a squad, Captain first. */
@@ -924,6 +1000,20 @@ object ClubApi {
         return runCatching {
             val (code, _) = restPost(session, "/rest/v1/squad_members", rows.toString())
             if (code !in 200..299) throw IllegalStateException("Could not add members ($code)")
+            // Same courtesy as creation: bell notification + phone push.
+            for (t in memberIds) notifySquadAdded(session, squadId, t)
+            val squadName = runCatching {
+                val rows2 = restGet(
+                    session, "/rest/v1/squads",
+                    mapOf("select" to "name", "id" to "eq.$squadId", "limit" to "1")
+                )
+                rows2.firstOrNull()?.jsonObject?.get("name")
+                    ?.jsonPrimitive?.contentOrNull
+            }.getOrNull()
+            sendMessagePushSquad(
+                session, squadId,
+                "👋 You were added to “${squadName ?: "a squad"}” — tap to say hello"
+            )
             Unit
         }
     }

@@ -1,5 +1,9 @@
 package com.knightwarriorsclub.app
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,6 +22,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -171,7 +178,7 @@ fun SquadsScreen(
                     val last = latest[sq.id]
                     GlassCard(Modifier.fillMaxWidth().clickable { onOpenSquad(sq) }) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            InitialAvatar(sq.name)
+                            AvatarImage(url = sq.avatarUrl, name = sq.name, size = 44)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -357,7 +364,7 @@ fun SquadChatScreen(
                 modifier = Modifier.size(26.dp).clickable { onBack() }
             )
             Spacer(Modifier.width(10.dp))
-            InitialAvatar(squad.name, 38)
+            AvatarImage(url = squad.avatarUrl, name = squad.name, size = 38)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.clickable { onOpenDetails() }) {
                 Text(squad.name, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
@@ -467,7 +474,27 @@ fun SquadChatScreen(
 private fun snapshotFlowCompat(state: androidx.compose.foundation.lazy.LazyListState) =
     androidx.compose.runtime.snapshotFlow { state.firstVisibleItemIndex }
 
-// ── Squad details (members & captain tools) ──────────────────────────────
+// ── Squad profile (identity, roster & captain tools) ─────────────────────
+
+/** "2026-11" → "Nov 2026" for the squad's Since chip. */
+private fun squadSince(createdAt: String?): String? = createdAt?.let {
+    runCatching {
+        java.time.YearMonth.parse(it.take(7))
+            .format(java.time.format.DateTimeFormatter.ofPattern("MMM yyyy"))
+    }.getOrNull()
+}
+
+@Composable
+private fun SquadChip(text: String) {
+    Box(
+        Modifier.clip(RoundedCornerShape(50))
+            .background(Color.White.copy(alpha = 0.13f))
+            .border(1.dp, GlassRim, RoundedCornerShape(50))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(text, color = Color.White, fontSize = 11.sp)
+    }
+}
 
 @Composable
 fun SquadDetailsScreen(
@@ -483,11 +510,35 @@ fun SquadDetailsScreen(
     var adding by remember { mutableStateOf(false) }
     var allMembers by remember { mutableStateOf<List<Member>>(emptyList()) }
     var addSelected by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var renameDialog by remember { mutableStateOf(false) }
+    var editDialog by remember { mutableStateOf(false) }
+    var avatarUrl by remember { mutableStateOf(squad.avatarUrl) }
+    var squadMotto by remember { mutableStateOf(squad.motto ?: "") }
+    var photoBusy by remember { mutableStateOf(false) }
+    var note by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val photoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            photoBusy = true
+            scope.launch {
+                val bytes = decodeDownscaledJpeg(context, uri)
+                val url = bytes?.let {
+                    ClubApi.uploadSquadAvatar(session, squad.id, it)
+                }?.getOrNull()
+                if (url != null) {
+                    avatarUrl = url
+                    note = "Squad picture updated."
+                } else {
+                    note = "Picture upload failed — check your connection."
+                }
+                photoBusy = false
+            }
+        }
+    }
     var removeTarget by remember { mutableStateOf<Member?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
     var confirmDisband by remember { mutableStateOf(false) }
-    var note by remember { mutableStateOf<String?>(null) }
 
     suspend fun reload() {
         rows = ClubApi.squadMembers(session, squad.id)
@@ -499,31 +550,49 @@ fun SquadDetailsScreen(
         allMembers = ClubApi.allMembers(session)
     }
 
-    if (renameDialog) {
-        var draft by remember { mutableStateOf(squadName) }
+    if (editDialog) {
+        var draftName by remember { mutableStateOf(squadName) }
+        var draftMotto by remember { mutableStateOf(squadMotto) }
         AlertDialog(
-            onDismissRequest = { renameDialog = false },
-            title = { Text("Rename squad") },
+            onDismissRequest = { editDialog = false },
+            title = { Text("Edit squad") },
             text = {
-                OutlinedTextField(
-                    value = draft, onValueChange = { draft = it }, singleLine = true
-                )
+                Column {
+                    OutlinedTextField(
+                        value = draftName, onValueChange = { draftName = it },
+                        label = { Text("Squad name") }, singleLine = true
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draftMotto, onValueChange = { draftMotto = it },
+                        label = { Text("Motto") },
+                        placeholder = { Text("e.g. We never miss a final") },
+                        singleLine = true
+                    )
+                }
             },
             confirmButton = {
                 TextButton(onClick = {
-                    renameDialog = false
-                    val newName = draft.trim()
+                    editDialog = false
+                    val newName = draftName.trim()
                     if (newName.isNotBlank()) {
                         scope.launch {
-                            val res = ClubApi.renameSquad(session, squad.id, newName)
-                            if (res.isSuccess) squadName = newName
-                            else note = "Rename didn't work — captains and the President can rename."
+                            val res = ClubApi.updateSquadInfo(
+                                session, squad.id, newName,
+                                draftMotto.trim().ifBlank { null }
+                            )
+                            if (res.isSuccess) {
+                                squadName = newName
+                                squadMotto = draftMotto.trim()
+                            } else {
+                                note = "Edit didn't work — captains and the President can edit the squad."
+                            }
                         }
                     }
                 }) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { renameDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { editDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -629,19 +698,55 @@ fun SquadDetailsScreen(
                 modifier = Modifier.size(26.dp).clickable { onBack() }
             )
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(squadName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
-                Text(
-                    if (isCaptain) "You are the Captain" else "Squad chat",
-                    color = Color(0xFFC4CEDC), fontSize = 11.sp
+            Text("Squad Profile", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        // cover banner + overlapping squad picture (captain gets the pen)
+        Box(Modifier.fillMaxWidth().height(196.dp)) {
+            Image(
+                painter = painterResource(R.drawable.profile_cover),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxWidth().height(150.dp)
+                    .align(Alignment.TopCenter)
+                    .clip(RoundedCornerShape(20.dp))
+            )
+            Box(Modifier.padding(start = 14.dp).align(Alignment.BottomStart)) {
+                AvatarImage(
+                    url = avatarUrl, name = squadName, size = 84,
+                    showEditPen = isCaptain && !photoBusy,
+                    onEditClick = {
+                        photoPicker.launch(
+                            PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.ImageOnly
+                            )
+                        )
+                    }
                 )
             }
-            if (isCaptain) {
-                Text(
-                    "RENAME", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp,
-                    modifier = Modifier.clickable { renameDialog = true }.padding(8.dp)
-                )
-            }
+        }
+        if (photoBusy) {
+            Text("Uploading picture…", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(squadName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 21.sp)
+        if (squadMotto.isNotBlank()) {
+            Text("“$squadMotto”", color = GoldLight, fontSize = 13.sp)
+        }
+        Text(
+            if (isCaptain) "You are the Captain" else "Squad",
+            color = Color(0xFFC4CEDC), fontSize = 12.sp
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            SquadChip("Squad #${squad.id}")
+            squad.game?.let { SquadChip(it) }
+            squadSince(squad.createdAt)?.let { SquadChip("Since $it") }
+            SquadChip("${rows.size} members")
+        }
+        if (isCaptain) {
+            Spacer(Modifier.height(10.dp))
+            GoldButton("EDIT SQUAD", enabled = true) { editDialog = true }
         }
         Spacer(Modifier.height(12.dp))
         Text(
