@@ -81,13 +81,29 @@ class CallController(private val context: Context) {
         private const val CALLEE_RING_MS = 40000L // callee-side stale-ring safety (web parity)
         private const val DISCONNECT_GRACE_MS = 6000L
         private const val CONNECT_MS = 20000L      // max time in Connecting… before failing the call
-        private val ICE_SERVERS = listOf(
-            "stun:stun.l.google.com:19302" to null,
-            "stun:stun1.l.google.com:19302" to null,
-            "turn:openrelay.metered.ca:80" to "openrelayproject",
-            "turn:openrelay.metered.ca:443" to "openrelayproject",
-            "turn:openrelay.metered.ca:443?transport=tcp" to "openrelayproject"
+        // Fallback list (used until kwc-turn answers, and if it fails):
+        // Google STUN + the shared public Open Relay.
+        private val FALLBACK_ICE = listOf(
+            ClubApi.IceServerCfg("stun:stun.l.google.com:19302"),
+            ClubApi.IceServerCfg("stun:stun1.l.google.com:19302"),
+            ClubApi.IceServerCfg("turn:openrelay.metered.ca:80", "openrelayproject", "openrelayproject"),
+            ClubApi.IceServerCfg("turn:openrelay.metered.ca:443", "openrelayproject", "openrelayproject"),
+            ClubApi.IceServerCfg("turn:openrelay.metered.ca:443?transport=tcp", "openrelayproject", "openrelayproject")
         )
+    }
+
+    /** The club's own Metered relay list from kwc-turn (null = not yet). */
+    @Volatile
+    private var remoteIce: List<ClubApi.IceServerCfg>? = null
+
+    /** Fetch (or refresh) the relay list; silent on failure. */
+    private fun refreshIce() {
+        val s = session ?: return
+        val sc = scope ?: return
+        sc.launch {
+            val list = ClubApi.fetchIceServers(s)
+            if (list.isNotEmpty()) remoteIce = list
+        }
     }
 
     var uiState by mutableStateOf(CallUiState())
@@ -162,6 +178,7 @@ class CallController(private val context: Context) {
                 "cancel" -> onCancel(payload)
             }
         })
+        refreshIce()
     }
 
     fun stop() {
@@ -187,6 +204,7 @@ class CallController(private val context: Context) {
 
     fun startCall(partnerMember: Member, callKind: String) {
         if (uiState.phase != CallPhase.IDLE) return
+        refreshIce()
         val needed = if (callKind == "video")
             arrayOf(android.Manifest.permission.CAMERA, android.Manifest.permission.RECORD_AUDIO)
         else arrayOf(android.Manifest.permission.RECORD_AUDIO)
@@ -245,6 +263,7 @@ class CallController(private val context: Context) {
     // ── incoming ─────────────────────────────────────────────────────────
 
     private fun onInvite(payload: JsonObject) {
+        refreshIce()
         val fromObj = payload["from"]?.jsonObject ?: return
         val fromId = fromObj["id"]?.jsonPrimitive?.longOrNull ?: return
         val incCallId = payload["callId"]?.jsonPrimitive?.contentOrNull ?: return
@@ -586,12 +605,10 @@ class CallController(private val context: Context) {
 
     private fun buildPeerConnection(): PeerConnection? {
         val f = ensureFactory() ?: return null
-        val iceServers = ICE_SERVERS.map { (url, user) ->
-            val b = PeerConnection.IceServer.builder(url)
-            if (user != null) {
-                b.setUsername(user)
-                b.setPassword(user)
-            }
+        val iceServers = (remoteIce ?: FALLBACK_ICE).map { cfg ->
+            val b = PeerConnection.IceServer.builder(cfg.url)
+            if (cfg.username != null) b.setUsername(cfg.username)
+            if (cfg.credential != null) b.setPassword(cfg.credential)
             b.createIceServer()
         }
         val config = PeerConnection.RTCConfiguration(iceServers)

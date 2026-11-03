@@ -917,6 +917,44 @@ object ClubApi {
             Unit
         }
 
+    /** One ICE server entry for WebRTC (from kwc-turn or the fallback). */
+    data class IceServerCfg(
+        val url: String,
+        val username: String? = null,
+        val credential: String? = null
+    )
+
+    /**
+     * The club's own Metered relay list, via the kwc-turn Edge Function
+     * (member session required). Empty list on any failure — callers
+     * fall back to the built-in servers.
+     */
+    suspend fun fetchIceServers(session: Session): List<IceServerCfg> {
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/kwc-turn")
+            .post("{}".toRequestBody(JSON_MEDIA)).build()
+        val (code, body) = execute(req)
+        if (code !in 200..299) return emptyList()
+        return runCatching {
+            val arr = json.parseToJsonElement(body).jsonObject["iceServers"]?.jsonArray
+                ?: return emptyList()
+            arr.mapNotNull { el ->
+                val o = el.jsonObject
+                val urls = o["urls"] ?: return@mapNotNull null
+                val url = when (val u = urls) {
+                    is JsonPrimitive -> u.contentOrNull
+                    is JsonArray -> u.firstOrNull()?.jsonPrimitive?.contentOrNull
+                    else -> null
+                } ?: return@mapNotNull null
+                IceServerCfg(
+                    url = url,
+                    username = o["username"]?.jsonPrimitive?.contentOrNull,
+                    credential = o["credential"]?.jsonPrimitive?.contentOrNull
+                )
+            }
+        }.getOrDefault(emptyList())
+    }
+
     /** Fresh copy of one squad row (name/motto/picture straight from the DB). */
     suspend fun squadById(session: Session, squadId: Long): Squad? {
         val (_, body) = restGet(
