@@ -116,6 +116,10 @@ fun WebPageView(
                             // strip (.jump-bar) sticks at top:112px on the
                             // site (room for the site header); in the app
                             // it must pin flush to the WebView top instead.
+                            // beta47 (Pranto): the site FOOTER is hidden in
+                            // the app — its Explore links let members wander
+                            // off the section they opened; in the app only
+                            // that section shows.
                             view?.evaluateJavascript(
                                 """
                                 (function () {
@@ -128,7 +132,8 @@ fun WebPageView(
                                   s.textContent = '.site-head{display:none !important}' +
                                     'main{padding-top:12px !important}' +
                                     'section{padding-top:16px !important}' +
-                                    '.jump-bar{top:0 !important}';
+                                    '.jump-bar{top:0 !important}' +
+                                    'footer{display:none !important}';
                                 })();
                                 """.trimIndent(),
                                 null
