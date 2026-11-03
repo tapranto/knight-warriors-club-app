@@ -324,7 +324,22 @@ fun PollsScreen(
                 Column {
                     ClubTextField("Question", question, onChange = { question = it })
                     Spacer(Modifier.height(8.dp))
-                    ClubTextField("Options — one per line", optionsText, onChange = { optionsText = it })
+                    ClubTextField(
+                        "Options — one per line", optionsText,
+                        onChange = { optionsText = it }, singleLine = false
+                    )
+                    // beta57 (Pranto hit this): say WHY Create is grey —
+                    // a poll needs at least 2 options
+                    val optCount = optionsText.lines().count { it.isNotBlank() }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (optCount < 2)
+                            "Add at least 2 options, one per line — CREATE turns on at 2 (now: $optCount)"
+                        else
+                            "$optCount options — ready to create",
+                        color = if (optCount < 2) Color(0xFFFF9B9B) else Color(0xFF9BE29B),
+                        fontSize = 11.sp
+                    )
                 }
             },
             confirmButton = {

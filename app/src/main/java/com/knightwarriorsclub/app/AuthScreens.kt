@@ -68,11 +68,12 @@ fun ClubTextField(
     placeholder: String? = null,
     readOnly: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
-    contentType: ContentType? = null
+    contentType: ContentType? = null,
+    singleLine: Boolean = true
 ) {
     OutlinedTextField(
         value = value, onValueChange = onChange,
-        label = { Text(label) }, singleLine = true, readOnly = readOnly,
+        label = { Text(label) }, singleLine = singleLine, readOnly = readOnly,
         placeholder = placeholder?.let { { Text(it, color = Color(0xFF8E9BAC)) } },
         trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
