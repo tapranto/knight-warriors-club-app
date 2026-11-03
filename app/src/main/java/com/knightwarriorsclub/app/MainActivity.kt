@@ -101,6 +101,7 @@ private sealed interface Screen {
     data object ProfileEdit : Screen
     data class ChatDetails(val partner: Member) : Screen
     data object Squads : Screen
+    data object AllSquads : Screen
     data object CreateSquad : Screen
     data class SquadChat(val squad: Squad, val backTo: Screen) : Screen
     data class SquadDetails(val squad: Squad, val backTo: Screen) : Screen
@@ -615,6 +616,11 @@ fun ClubApp(
                             onCreate = { screen = Screen.CreateSquad },
                             onOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.Squads) }
                         )
+                        is Screen.AllSquads -> AllSquadsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs },
+                            onOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.AllSquads) }
+                        )
                         is Screen.CreateSquad -> CreateSquadScreen(
                             session = s, me = myProfile ?: return@Column,
                             onBack = { screen = Screen.Squads },
@@ -688,6 +694,7 @@ fun ClubApp(
                                             screen = Screen.Profile(mid, Screen.Tabs)
                                         },
                                         onOpenSquads = { screen = Screen.Squads },
+                                        onOpenAllSquads = { screen = Screen.AllSquads },
                                         onOpenWeb = { url, title ->
                                             screen = Screen.WebPage(url, title)
                                         },
@@ -1081,6 +1088,7 @@ private fun MorePanel(
     me: Member?,
     onOpenProfile: (Long) -> Unit = {},
     onOpenSquads: () -> Unit = {},
+    onOpenAllSquads: () -> Unit = {},
     onOpenWeb: (String, String) -> Unit = { _, _ -> },
     hasCustomBg: Boolean,
     onPickBackground: () -> Unit,
@@ -1132,13 +1140,18 @@ private fun MorePanel(
         listOf(
             "Profile" to "Your member card & honours",
             "My Squads" to "Your teams",
+            "All Squads" to "Every squad in the club — President",
             "Community" to "Meet the committee",
             "Leaderboard" to "Club rankings",
             "Tournaments" to "All club tournaments",
             "Tournament Maker" to "Build your own tournament",
             "About the Club" to "Since 2023",
             "Settings" to "Sounds, vibration, app lock"
-        ).forEach { (t, s) ->
+        ).filter { (t, _) ->
+            // All Squads is the President's window on the whole club
+            t != "All Squads" ||
+                (me?.role?.equals("President", ignoreCase = true) == true)
+        }.forEach { (t, s) ->
             item {
                 GlassCard(Modifier.fillMaxWidth().clickable {
                     when (t) {
@@ -1148,6 +1161,7 @@ private fun MorePanel(
                             "https://knightwarriorsclub.com/#community", "Community"
                         )
                         "My Squads" -> onOpenSquads()
+                        "All Squads" -> onOpenAllSquads()
                         "Leaderboard" -> onOpenWeb(
                             "https://knightwarriorsclub.com/#leaderboard", "Leaderboard"
                         )

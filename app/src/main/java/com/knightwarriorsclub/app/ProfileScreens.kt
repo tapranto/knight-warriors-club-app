@@ -189,6 +189,10 @@ fun MemberProfileScreen(
     var games by remember { mutableStateOf<List<Triple<String, String?, Int?>>>(emptyList()) }
     var squads by remember { mutableStateOf<List<Pair<Squad, String>>>(emptyList()) }
     var squadHonours by remember { mutableStateOf<List<ClubApi.SquadHonour>>(emptyList()) }
+    var playerHonours by remember { mutableStateOf<List<ClubApi.MemberHonour>>(emptyList()) }
+    var awardPlayerDialog by remember { mutableStateOf(false) }
+    var removePlayerHonour by remember { mutableStateOf<ClubApi.MemberHonour?>(null) }
+    val isPresident = me.role.equals("President", ignoreCase = true)
     var loaded by remember { mutableStateOf(false) }
     var photoBusy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -198,11 +202,16 @@ fun MemberProfileScreen(
         games = ClubApi.memberGames(session, memberId)
         squads = ClubApi.squadsOf(session, memberId)
         squadHonours = ClubApi.memberSquadHonours(session, memberId)
+        playerHonours = ClubApi.memberHonours(session, memberId)
         loaded = true
     }
 
     val m = member
     val own = memberId == me.id
+    var awardLogoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val awardLogoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> awardLogoUri = uri }
 
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -230,6 +239,97 @@ fun MemberProfileScreen(
                 photoBusy = false
             }
         }
+    }
+
+    if (awardPlayerDialog) {
+        var draftTitle by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { awardPlayerDialog = false },
+            title = { Text("Award a trophy") },
+            text = {
+                Column {
+                    Text(
+                        "An individual honour for ${m?.fullName ?: "this player"} — " +
+                            "it appears on their profile.",
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draftTitle, onValueChange = { draftTitle = it },
+                        label = { Text("Award name") },
+                        placeholder = { Text("e.g. Player of the Tournament") },
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = {
+                            awardLogoPicker.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        }) {
+                            Text(if (awardLogoUri == null) "Add award logo (optional)" else "Change logo")
+                        }
+                        if (awardLogoUri != null) {
+                            Text("✓ Logo picked", color = GoldLight, fontSize = 11.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = draftTitle.trim()
+                    awardPlayerDialog = false
+                    if (t.isNotBlank()) {
+                        scope.launch {
+                            var logoUrl: String? = null
+                            val uri = awardLogoUri
+                            if (uri != null) {
+                                val bytes = decodeDownscaledJpeg(context, uri)
+                                if (bytes != null) {
+                                    logoUrl = ClubApi.uploadAwardLogo(session, bytes).getOrNull()
+                                }
+                            }
+                            awardLogoUri = null
+                            val res = ClubApi.awardMemberHonour(session, memberId, t, me.id, logoUrl)
+                            if (res.isSuccess) {
+                                playerHonours = ClubApi.memberHonours(session, memberId)
+                                note = "Trophy awarded."
+                            } else {
+                                note = "Award didn't work — only the President can award trophies."
+                            }
+                        }
+                    }
+                }) { Text("Award") }
+            },
+            dismissButton = {
+                TextButton(onClick = { awardPlayerDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+    removePlayerHonour?.let { h ->
+        AlertDialog(
+            onDismissRequest = { removePlayerHonour = null },
+            title = { Text("Remove this trophy?") },
+            text = { Text("“${h.title}” will be removed from this profile.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    removePlayerHonour = null
+                    scope.launch {
+                        val res = ClubApi.deleteMemberHonour(session, h.id)
+                        if (res.isSuccess) {
+                            playerHonours = ClubApi.memberHonours(session, memberId)
+                        } else {
+                            note = "Remove didn't work."
+                        }
+                    }
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removePlayerHonour = null }) { Text("Cancel") }
+            }
+        )
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
@@ -443,9 +543,19 @@ fun MemberProfileScreen(
                 }
             }
             item {
-                Text("TOURNAMENT HONOURS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("TOURNAMENT HONOURS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Spacer(Modifier.weight(1f))
+                    if (isPresident) {
+                        Text(
+                            "AWARD 🏆", color = GoldLight,
+                            fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                            modifier = Modifier.clickable { awardPlayerDialog = true }.padding(6.dp)
+                        )
+                    }
+                }
                 Spacer(Modifier.height(6.dp))
-                if (squadHonours.isEmpty()) {
+                if (playerHonours.isEmpty() && squadHonours.isEmpty()) {
                     GlassCard(Modifier.fillMaxWidth()) {
                         Text("♛  No honours yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         Text(
@@ -455,16 +565,52 @@ fun MemberProfileScreen(
                     }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        playerHonours.forEach { h ->
+                            GlassCard(Modifier.fillMaxWidth()) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (h.logoUrl != null) {
+                                        AvatarImage(url = h.logoUrl, name = h.title, size = 34)
+                                        Spacer(Modifier.width(10.dp))
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "🏆  ${h.title}", color = Color.White,
+                                            fontWeight = FontWeight.SemiBold, fontSize = 14.sp
+                                        )
+                                        Text(
+                                            "Individual honour",
+                                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                        )
+                                    }
+                                    if (isPresident) {
+                                        Text(
+                                            "REMOVE", color = Color(0xFFFF9B9B),
+                                            fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                                            modifier = Modifier.clickable { removePlayerHonour = h }
+                                                .padding(6.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                         squadHonours.forEach { h ->
                             GlassCard(Modifier.fillMaxWidth()) {
-                                Text(
-                                    "🏆  ${h.title}", color = Color.White,
-                                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp
-                                )
-                                Text(
-                                    "Won with ${h.squadName ?: "a squad"}",
-                                    color = Color(0xFFC4CEDC), fontSize = 11.sp
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (h.logoUrl != null) {
+                                        AvatarImage(url = h.logoUrl, name = h.title, size = 34)
+                                        Spacer(Modifier.width(10.dp))
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            "🏆  ${h.title}", color = Color.White,
+                                            fontWeight = FontWeight.SemiBold, fontSize = 14.sp
+                                        )
+                                        Text(
+                                            "Won with ${h.squadName ?: "a squad"}",
+                                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }

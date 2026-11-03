@@ -218,6 +218,172 @@ fun SquadsScreen(
     }
 }
 
+// ── All Squads (President) ───────────────────────────────────────────────
+
+@Composable
+fun AllSquadsScreen(
+    session: Session, me: Member,
+    onBack: () -> Unit,
+    onOpenSquad: (Squad) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var squads by remember { mutableStateOf<List<Squad>>(emptyList()) }
+    var captains by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var counts by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
+    var query by remember { mutableStateOf("") }
+    var loaded by remember { mutableStateOf(false) }
+    var awardTarget by remember { mutableStateOf<Squad?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    var awardLogoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val awardLogoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> awardLogoUri = uri }
+
+    LaunchedEffect(me.id) {
+        squads = ClubApi.allSquads(session)
+        captains = ClubApi.allMembers(session).associate { it.id to it.fullName }
+        counts = ClubApi.squadMemberCounts(session)
+        loaded = true
+    }
+
+    val shown = squads.filter { sq ->
+        val q = query.trim().lowercase()
+        q.isEmpty() || sq.name.lowercase().contains(q) ||
+            (captains[sq.captainId] ?: "").lowercase().contains(q)
+    }
+
+    awardTarget?.let { target ->
+        var draftTitle by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { awardTarget = null },
+            title = { Text("Award a trophy") },
+            text = {
+                Column {
+                    Text(
+                        "For ${target.name} — it appears on the squad's profile " +
+                            "and on every member's profile.",
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draftTitle, onValueChange = { draftTitle = it },
+                        label = { Text("Award name") },
+                        placeholder = { Text("e.g. eFootball Squad Cup — Champions") },
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = {
+                            awardLogoPicker.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        }) {
+                            Text(if (awardLogoUri == null) "Add award logo (optional)" else "Change logo")
+                        }
+                        if (awardLogoUri != null) {
+                            Text("✓ Logo picked", color = GoldLight, fontSize = 11.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = draftTitle.trim()
+                    awardTarget = null
+                    if (t.isNotBlank()) {
+                        scope.launch {
+                            var logoUrl: String? = null
+                            val uri = awardLogoUri
+                            if (uri != null) {
+                                val bytes = decodeDownscaledJpeg(context, uri)
+                                if (bytes != null) {
+                                    logoUrl = ClubApi.uploadAwardLogo(session, bytes).getOrNull()
+                                }
+                            }
+                            awardLogoUri = null
+                            val res = ClubApi.awardSquadHonour(session, target.id, t, me.id, logoUrl)
+                            note = if (res.isSuccess) "Trophy awarded to ${target.name}."
+                                else "Award didn't work — only the President can award trophies."
+                        }
+                    }
+                }) { Text("Award") }
+            },
+            dismissButton = {
+                TextButton(onClick = { awardTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
+                tint = Color.White,
+                modifier = Modifier.size(26.dp).clickable { onBack() }
+            )
+            Spacer(Modifier.width(10.dp))
+            Column {
+                Text("All Squads", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text("Every squad in the club — President", color = Color(0xFFC4CEDC), fontSize = 11.sp)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        ClubTextField(
+            label = "Search squads or captains",
+            value = query, onChange = { query = it }
+        )
+        Spacer(Modifier.height(12.dp))
+        if (note != null) {
+            Text(note!!, color = Color(0xFFC4CEDC), fontSize = 12.sp)
+            Spacer(Modifier.height(8.dp))
+        }
+        if (!loaded) {
+            Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+        } else if (shown.isEmpty()) {
+            Text(
+                if (squads.isEmpty()) "No squads in the club yet."
+                else "No squads match that search.",
+                color = Color(0xFFC4CEDC), fontSize = 13.sp
+            )
+        } else {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(shown, key = { it.id }) { sq ->
+                    GlassCard(Modifier.fillMaxWidth().clickable { onOpenSquad(sq) }) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            AvatarImage(url = sq.avatarUrl, name = sq.name, size = 44)
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    sq.name, color = Color.White,
+                                    fontWeight = FontWeight.SemiBold, fontSize = 15.sp
+                                )
+                                Text(
+                                    listOfNotNull(
+                                        sq.game,
+                                        "Captain ${captains[sq.captainId] ?: "—"}",
+                                        "${counts[sq.id] ?: 0} members"
+                                    ).joinToString(" · "),
+                                    color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                )
+                            }
+                            Text(
+                                "🏆 AWARD", color = GoldLight,
+                                fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                                modifier = Modifier.clickable { awardTarget = sq }
+                                    .padding(8.dp)
+                            )
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+            }
+        }
+    }
+}
+
 // ── Create squad ─────────────────────────────────────────────────────────
 
 @Composable
@@ -573,6 +739,10 @@ fun SquadDetailsScreen(
             }
         }
     }
+    var awardLogoUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    val awardLogoPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> awardLogoUri = uri }
     var removeTarget by remember { mutableStateOf<Member?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
     var confirmDisband by remember { mutableStateOf(false) }
@@ -655,10 +825,25 @@ fun SquadDetailsScreen(
                     Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = draftTitle, onValueChange = { draftTitle = it },
-                        label = { Text("Trophy title") },
+                        label = { Text("Award name") },
                         placeholder = { Text("e.g. eFootball Squad Cup — Champions") },
                         singleLine = true
                     )
+                    Spacer(Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = {
+                            awardLogoPicker.launch(
+                                PickVisualMediaRequest(
+                                    ActivityResultContracts.PickVisualMedia.ImageOnly
+                                )
+                            )
+                        }) {
+                            Text(if (awardLogoUri == null) "Add award logo (optional)" else "Change logo")
+                        }
+                        if (awardLogoUri != null) {
+                            Text("✓ Logo picked", color = GoldLight, fontSize = 11.sp)
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -667,7 +852,16 @@ fun SquadDetailsScreen(
                     awardDialog = false
                     if (t.isNotBlank()) {
                         scope.launch {
-                            val res = ClubApi.awardSquadHonour(session, squad.id, t, me.id)
+                            var logoUrl: String? = null
+                            val uri = awardLogoUri
+                            if (uri != null) {
+                                val bytes = decodeDownscaledJpeg(context, uri)
+                                if (bytes != null) {
+                                    logoUrl = ClubApi.uploadAwardLogo(session, bytes).getOrNull()
+                                }
+                            }
+                            awardLogoUri = null
+                            val res = ClubApi.awardSquadHonour(session, squad.id, t, me.id, logoUrl)
                             if (res.isSuccess) {
                                 note = "Trophy awarded to $squadName."
                                 reload()
@@ -886,7 +1080,11 @@ fun SquadDetailsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 honours.forEach { h ->
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("🏆", fontSize = 15.sp)
+                        if (h.logoUrl != null) {
+                            AvatarImage(url = h.logoUrl, name = h.title, size = 30)
+                        } else {
+                            Text("🏆", fontSize = 15.sp)
+                        }
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text(

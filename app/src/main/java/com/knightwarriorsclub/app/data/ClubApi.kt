@@ -840,6 +840,83 @@ object ClubApi {
         }
     }
 
+    /** Every squad in the club, oldest first (President's All Squads). */
+    suspend fun allSquads(session: Session): List<Squad> {
+        val (_, body) = restGet(
+            session,
+            "/rest/v1/squads?select=id,name,game,captain_member_id,created_at,avatar_url,motto" +
+                "&order=created_at.asc"
+        )
+        return runCatching {
+            json.parseToJsonElement(body).jsonArray.map { toSquad(it.jsonObject) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Member count per squad id, club-wide. */
+    suspend fun squadMemberCounts(session: Session): Map<Long, Int> {
+        val (_, body) = restGet(session, "/rest/v1/squad_members?select=squad_id")
+        return runCatching {
+            val counts = mutableMapOf<Long, Int>()
+            json.parseToJsonElement(body).jsonArray.forEach { el ->
+                val sid = el.jsonObject["squad_id"]?.jsonPrimitive?.longOrNull
+                if (sid != null) counts[sid] = (counts[sid] ?: 0) + 1
+            }
+            counts
+        }.getOrDefault(emptyMap())
+    }
+
+    /** One individual player trophy (Part 17), awarded by the President. */
+    data class MemberHonour(
+        val id: Long,
+        val memberId: Long,
+        val title: String,
+        val logoUrl: String? = null,
+        val createdAt: String?
+    )
+
+    private fun toMemberHonour(o: JsonObject): MemberHonour = MemberHonour(
+        id = o["id"]?.jsonPrimitive?.longOrNull ?: 0,
+        memberId = o["member_id"]?.jsonPrimitive?.longOrNull ?: 0,
+        title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
+        logoUrl = o["logo_url"]?.jsonPrimitive?.contentOrNull,
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull
+    )
+
+    /** Individual trophies of one member, newest first. Fail-soft pre-Part 17. */
+    suspend fun memberHonours(session: Session, memberId: Long): List<MemberHonour> {
+        val (_, body) = restGet(
+            session,
+            "/rest/v1/member_honours?member_id=eq.$memberId" +
+                "&select=id,member_id,title,logo_url,created_at&order=created_at.desc"
+        )
+        return runCatching {
+            json.parseToJsonElement(body).jsonArray
+                .map { toMemberHonour(it.jsonObject) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** President awards an individual trophy to a player (Part 17 RLS). */
+    suspend fun awardMemberHonour(
+        session: Session, memberId: Long, title: String, awardedBy: Long,
+        logoUrl: String? = null
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("member_id", memberId); put("title", title); put("awarded_by", awardedBy)
+            if (logoUrl != null) put("logo_url", logoUrl)
+        }
+        val (code, body) = restPost(session, "/rest/v1/member_honours", payload.toString())
+        if (code !in 200..299) throw IllegalStateException("Award failed ($code): $body")
+        Unit
+    }
+
+    /** President removes an individual trophy. */
+    suspend fun deleteMemberHonour(session: Session, honourId: Long): Result<Unit> =
+        runCatching {
+            val (code, _) = restDelete(session, "/rest/v1/member_honours?id=eq.$honourId")
+            if (code !in 200..299) throw IllegalStateException("Remove failed ($code)")
+            Unit
+        }
+
     /** Fresh copy of one squad row (name/motto/picture straight from the DB). */
     suspend fun squadById(session: Session, squadId: Long): Squad? {
         val (_, body) = restGet(
@@ -858,6 +935,7 @@ object ClubApi {
         val id: Long,
         val squadId: Long,
         val title: String,
+        val logoUrl: String? = null,
         val createdAt: String?,
         val squadName: String? = null
     )
@@ -866,6 +944,7 @@ object ClubApi {
         id = o["id"]?.jsonPrimitive?.longOrNull ?: 0,
         squadId = o["squad_id"]?.jsonPrimitive?.longOrNull ?: 0,
         title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
+        logoUrl = o["logo_url"]?.jsonPrimitive?.contentOrNull,
         createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull,
         squadName = (o["squads"] as? JsonObject)
             ?.get("name")?.jsonPrimitive?.contentOrNull
@@ -876,7 +955,7 @@ object ClubApi {
         val (_, body) = restGet(
             session,
             "/rest/v1/squad_honours?squad_id=eq.$squadId" +
-                "&select=id,squad_id,title,created_at&order=created_at.desc"
+                "&select=id,squad_id,title,logo_url,created_at&order=created_at.desc"
         )
         return runCatching {
             json.parseToJsonElement(body).jsonArray
@@ -892,7 +971,7 @@ object ClubApi {
         val (_, body) = restGet(
             session,
             "/rest/v1/squad_honours?squad_id=in.($inList)" +
-                "&select=id,squad_id,title,created_at,squads(name)&order=created_at.desc"
+                "&select=id,squad_id,title,logo_url,created_at,squads(name)&order=created_at.desc"
         )
         return runCatching {
             json.parseToJsonElement(body).jsonArray
@@ -900,12 +979,30 @@ object ClubApi {
         }.getOrDefault(emptyList())
     }
 
+    /** Upload an award logo into the President's storage folder. */
+    suspend fun uploadAwardLogo(session: Session, jpegBytes: ByteArray): Result<String> =
+        runCatching {
+            val path = "${session.authUserId}/award-${System.currentTimeMillis()}.jpg"
+            val req = Request.Builder()
+                .url(ClubConfig.SUPABASE_URL + "/storage/v1/object/avatars/$path")
+                .addHeader("apikey", ClubConfig.SUPABASE_PUBLISHABLE_KEY)
+                .addHeader("Authorization", "Bearer ${session.accessToken}")
+                .addHeader("x-upsert", "true")
+                .post(jpegBytes.toRequestBody("image/jpeg".toMediaType()))
+                .build()
+            val (code, body) = execute(req)
+            check(code in 200..299) { "award logo upload failed (HTTP $code): ${body.take(160)}" }
+            ClubConfig.SUPABASE_URL + "/storage/v1/object/public/avatars/" + path
+        }
+
     /** President awards a trophy to a squad (Part 16 RLS enforces it). */
     suspend fun awardSquadHonour(
-        session: Session, squadId: Long, title: String, awardedBy: Long
+        session: Session, squadId: Long, title: String, awardedBy: Long,
+        logoUrl: String? = null
     ): Result<Unit> = runCatching {
         val payload = buildJsonObject {
             put("squad_id", squadId); put("title", title); put("awarded_by", awardedBy)
+            if (logoUrl != null) put("logo_url", logoUrl)
         }
         val (code, body) = restPost(session, "/rest/v1/squad_honours", payload.toString())
         if (code !in 200..299) throw IllegalStateException("Award failed ($code): $body")
