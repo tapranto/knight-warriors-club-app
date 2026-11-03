@@ -62,8 +62,19 @@ fun clubFieldColors() = OutlinedTextFieldDefaults.colors(
     cursorColor = GoldLight
 )
 
+/** beta61: our own credential-kind enum for field signatures — the
+ *  experimental AutofillType in a signature forced an opt-in onto
+ *  EVERY file that merely calls ClubTextField/PasswordField (that's
+ *  what the beta59 error flood in ProfileScreens etc. was). Only
+ *  this file touches the real API now. */
+enum class ClubAutofillKind { EMAIL, PASSWORD }
+
 @Composable
-fun Modifier.clubAutofill(type: AutofillType, onFill: (String) -> Unit): Modifier {
+fun Modifier.clubAutofill(kind: ClubAutofillKind, onFill: (String) -> Unit): Modifier {
+    val type = when (kind) {
+        ClubAutofillKind.EMAIL -> AutofillType.EmailAddress
+        ClubAutofillKind.PASSWORD -> AutofillType.Password
+    }
     val autofill = LocalAutofill.current
     val node = remember(type) {
         AutofillNode(autofillTypes = listOf(type), onFill = onFill)
@@ -87,7 +98,7 @@ fun ClubTextField(
     placeholder: String? = null,
     readOnly: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
-    autofillType: AutofillType? = null,
+    autofill: ClubAutofillKind? = null,
     singleLine: Boolean = true
 ) {
     OutlinedTextField(
@@ -97,8 +108,8 @@ fun ClubTextField(
         trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         modifier = modifier.fillMaxWidth().then(
-            if (autofillType != null)
-                Modifier.clubAutofill(autofillType) { v -> onChange(v) }
+            if (autofill != null)
+                Modifier.clubAutofill(autofill) { v -> onChange(v) }
             else Modifier
         ),
         colors = clubFieldColors()
@@ -112,7 +123,7 @@ fun PasswordField(
     value: String,
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    autofillType: AutofillType = AutofillType.Password
+    autofill: ClubAutofillKind = ClubAutofillKind.PASSWORD
 ) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
@@ -130,7 +141,7 @@ fun PasswordField(
             }
         },
         modifier = modifier.fillMaxWidth()
-            .clubAutofill(autofillType) { v -> onChange(v) },
+            .clubAutofill(autofill) { v -> onChange(v) },
         colors = clubFieldColors()
     )
 }
@@ -266,7 +277,7 @@ fun RegisterScreen(
             ClubTextField(
                 "Email *", email, { email = it },
                 keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                autofillType = AutofillType.EmailAddress
+                autofill = ClubAutofillKind.EMAIL
             )
             FieldError(errors["email"])
             Spacer(Modifier.height(10.dp))
@@ -353,16 +364,10 @@ fun RegisterScreen(
             }
             FieldError(errors["gender"])
             Spacer(Modifier.height(10.dp))
-            PasswordField(
-                "Password *", password, { password = it },
-                autofillType = AutofillType.Password
-            )
+            PasswordField("Password *", password, { password = it })
             FieldError(errors["password"])
             Spacer(Modifier.height(10.dp))
-            PasswordField(
-                "Confirm password *", confirm, { confirm = it },
-                autofillType = AutofillType.Password
-            )
+            PasswordField("Confirm password *", confirm, { confirm = it })
             FieldError(errors["confirm"])
             if (formError != null) {
                 Spacer(Modifier.height(12.dp))
@@ -440,7 +445,7 @@ fun ForgotPasswordScreen(onBack: () -> Unit) {
                 ClubTextField(
                     "Email", email, { email = it },
                     keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                    autofillType = AutofillType.EmailAddress
+                    autofill = ClubAutofillKind.EMAIL
                 )
                 if (error != null) {
                     Spacer(Modifier.height(10.dp))
