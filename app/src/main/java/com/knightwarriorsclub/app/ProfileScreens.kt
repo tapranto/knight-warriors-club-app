@@ -1322,13 +1322,13 @@ fun MemberSearchScreen(
             Text("Search members", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
         }
         Spacer(Modifier.height(6.dp))
-        ClubTextField("Name or @username", query) { query = it }
+        ClubTextField("Name or @username", query, onChange = { query = it })
         Spacer(Modifier.height(12.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(results, key = { it.id }) { m ->
                 GlassCard(Modifier.fillMaxWidth().clickable { onOpenProfile(m.id) }) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        AvatarImage(m.avatarUrl, m.fullName, 40.dp)
+                        AvatarImage(m.avatarUrl, m.fullName, 40)
                         Spacer(Modifier.width(10.dp))
                         Column {
                             Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
