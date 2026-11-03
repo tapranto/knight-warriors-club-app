@@ -894,29 +894,29 @@ object ClubApi {
     }
 
     /** Every squad in the club, oldest first (President's All Squads). */
-    suspend fun allSquads(session: Session): List<Squad> {
-        val (_, body) = restGet(
-            session,
-            "/rest/v1/squads?select=id,name,game,captain_member_id,created_at,avatar_url,motto" +
-                "&order=created_at.asc"
+    suspend fun allSquads(session: Session): List<Squad> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/squads",
+            mapOf(
+                "select" to "id,name,game,captain_member_id,created_at,avatar_url,motto",
+                "order" to "created_at.asc"
+            )
         )
-        return runCatching {
-            json.parseToJsonElement(body).jsonArray.map { toSquad(it.jsonObject) }
-        }.getOrDefault(emptyList())
-    }
+        rows.map { toSquad(it.jsonObject) }
+    }.getOrDefault(emptyList())
 
     /** Member count per squad id, club-wide. */
-    suspend fun squadMemberCounts(session: Session): Map<Long, Int> {
-        val (_, body) = restGet(session, "/rest/v1/squad_members?select=squad_id")
-        return runCatching {
-            val counts = mutableMapOf<Long, Int>()
-            json.parseToJsonElement(body).jsonArray.forEach { el ->
-                val sid = el.jsonObject["squad_id"]?.jsonPrimitive?.longOrNull
-                if (sid != null) counts[sid] = (counts[sid] ?: 0) + 1
-            }
-            counts
-        }.getOrDefault(emptyMap())
-    }
+    suspend fun squadMemberCounts(session: Session): Map<Long, Int> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/squad_members", mapOf("select" to "squad_id")
+        )
+        val counts = mutableMapOf<Long, Int>()
+        rows.forEach { el ->
+            val sid = el.jsonObject["squad_id"]?.jsonPrimitive?.longOrNull
+            if (sid != null) counts[sid] = (counts[sid] ?: 0) + 1
+        }
+        counts
+    }.getOrDefault(emptyMap())
 
     /** One individual player trophy (Part 17), awarded by the President. */
     data class MemberHonour(
@@ -936,17 +936,18 @@ object ClubApi {
     )
 
     /** Individual trophies of one member, newest first. Fail-soft pre-Part 17. */
-    suspend fun memberHonours(session: Session, memberId: Long): List<MemberHonour> {
-        val (_, body) = restGet(
-            session,
-            "/rest/v1/member_honours?member_id=eq.$memberId" +
-                "&select=id,member_id,title,logo_url,created_at&order=created_at.desc"
-        )
-        return runCatching {
-            json.parseToJsonElement(body).jsonArray
-                .map { toMemberHonour(it.jsonObject) }
+    suspend fun memberHonours(session: Session, memberId: Long): List<MemberHonour> =
+        runCatching {
+            val rows = restGet(
+                session, "/rest/v1/member_honours",
+                mapOf(
+                    "member_id" to "eq.$memberId",
+                    "select" to "id,member_id,title,logo_url,created_at",
+                    "order" to "created_at.desc"
+                )
+            )
+            rows.map { toMemberHonour(it.jsonObject) }
         }.getOrDefault(emptyList())
-    }
 
     /** President awards an individual trophy to a player (Part 17 RLS). */
     suspend fun awardMemberHonour(
@@ -1009,17 +1010,16 @@ object ClubApi {
     }
 
     /** Fresh copy of one squad row (name/motto/picture straight from the DB). */
-    suspend fun squadById(session: Session, squadId: Long): Squad? {
-        val (_, body) = restGet(
-            session,
-            "/rest/v1/squads?id=eq.$squadId" +
-                "&select=id,name,game,captain_member_id,created_at,avatar_url,motto"
+    suspend fun squadById(session: Session, squadId: Long): Squad? = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/squads",
+            mapOf(
+                "id" to "eq.$squadId",
+                "select" to "id,name,game,captain_member_id,created_at,avatar_url,motto"
+            )
         )
-        return runCatching {
-            json.parseToJsonElement(body).jsonArray.firstOrNull()
-                ?.jsonObject?.let(::toSquad)
-        }.getOrNull()
-    }
+        rows.firstOrNull()?.jsonObject?.let(::toSquad)
+    }.getOrNull()
 
     /** One squad trophy (Part 16). [squadName] is set on member-profile reads. */
     data class SquadHonour(
@@ -1042,32 +1042,35 @@ object ClubApi {
     )
 
     /** Trophies of one squad, newest first. Fail-soft empty before Part 16. */
-    suspend fun squadHonours(session: Session, squadId: Long): List<SquadHonour> {
-        val (_, body) = restGet(
-            session,
-            "/rest/v1/squad_honours?squad_id=eq.$squadId" +
-                "&select=id,squad_id,title,logo_url,created_at&order=created_at.desc"
-        )
-        return runCatching {
-            json.parseToJsonElement(body).jsonArray
-                .map { toHonour(it.jsonObject) }
+    suspend fun squadHonours(session: Session, squadId: Long): List<SquadHonour> =
+        runCatching {
+            val rows = restGet(
+                session, "/rest/v1/squad_honours",
+                mapOf(
+                    "squad_id" to "eq.$squadId",
+                    "select" to "id,squad_id,title,logo_url,created_at",
+                    "order" to "created_at.desc"
+                )
+            )
+            rows.map { toHonour(it.jsonObject) }
         }.getOrDefault(emptyList())
-    }
 
     /** Every squad trophy a member shares in, across their squads. */
     suspend fun memberSquadHonours(session: Session, memberId: Long): List<SquadHonour> {
         val ids = squadsOf(session, memberId).map { it.first.id }
         if (ids.isEmpty()) return emptyList()
         val inList = ids.joinToString(",")
-        val (_, body) = restGet(
-            session,
-            "/rest/v1/squad_honours?squad_id=in.($inList)" +
-                "&select=id,squad_id,title,logo_url,created_at,squads(name)&order=created_at.desc"
-        )
-        return runCatching {
-            json.parseToJsonElement(body).jsonArray
-                .map { toHonour(it.jsonObject) }
-        }.getOrDefault(emptyList())
+        val rows = runCatching {
+            restGet(
+                session, "/rest/v1/squad_honours",
+                mapOf(
+                    "squad_id" to "in.($inList)",
+                    "select" to "id,squad_id,title,logo_url,created_at,squads(name)",
+                    "order" to "created_at.desc"
+                )
+            )
+        }.getOrDefault(JsonArray(emptyList()))
+        return rows.map { toHonour(it.jsonObject) }
     }
 
     /** Upload an award logo into the President's storage folder. */
