@@ -1597,4 +1597,268 @@ object ClubApi {
         }
         listOf(p, w, d, l)
     }.getOrDefault(listOf(0, 0, 0, 0))
+    // ---------------- beta42: feed, polls, MVP, reports ----------------
+
+    data class FeedPost(val id: Long, val memberId: Long, val body: String, val createdAt: String)
+
+    suspend fun feedPosts(session: Session): List<FeedPost> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/feed_posts",
+            mapOf(
+                "select" to "id,member_id,body,created_at",
+                "order" to "created_at.desc", "limit" to "60"
+            )
+        )
+        rows.map {
+            val o = it.jsonObject
+            FeedPost(
+                id = o["id"]!!.jsonPrimitive.long,
+                memberId = o["member_id"]!!.jsonPrimitive.long,
+                body = o["body"]?.jsonPrimitive?.contentOrNull ?: "",
+                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun createFeedPost(session: Session, me: Long, body: String): Result<Unit> =
+        runCatching {
+            val payload = buildJsonObject {
+                put("member_id", me); put("body", body)
+            }
+            val (code, _) = restPost(session, "/rest/v1/feed_posts", payload.toString())
+            check(code in 200..299) { "feed post failed: $code" }
+        }
+
+    suspend fun deleteFeedPost(session: Session, id: Long): Result<Unit> = runCatching {
+        restDelete(session, "/rest/v1/feed_posts", mapOf("id" to "eq.$id"))
+    }
+
+    data class Poll(val id: Long, val question: String, val createdAt: String)
+    data class PollOption(val id: Long, val pollId: Long, val label: String)
+    data class PollVote(val pollId: Long, val optionId: Long, val memberId: Long)
+
+    suspend fun polls(session: Session): List<Poll> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/polls",
+            mapOf("select" to "id,question,created_at", "order" to "created_at.desc", "limit" to "20")
+        )
+        rows.map {
+            val o = it.jsonObject
+            Poll(
+                id = o["id"]!!.jsonPrimitive.long,
+                question = o["question"]?.jsonPrimitive?.contentOrNull ?: "",
+                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun pollOptions(session: Session, pollId: Long): List<PollOption> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/poll_options",
+            mapOf("select" to "id,poll_id,label", "poll_id" to "eq.$pollId", "order" to "id.asc")
+        )
+        rows.map {
+            val o = it.jsonObject
+            PollOption(
+                id = o["id"]!!.jsonPrimitive.long,
+                pollId = o["poll_id"]!!.jsonPrimitive.long,
+                label = o["label"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun pollVotes(session: Session, pollId: Long): List<PollVote> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/poll_votes",
+            mapOf("select" to "poll_id,option_id,member_id", "poll_id" to "eq.$pollId")
+        )
+        rows.map {
+            val o = it.jsonObject
+            PollVote(
+                pollId = o["poll_id"]!!.jsonPrimitive.long,
+                optionId = o["option_id"]!!.jsonPrimitive.long,
+                memberId = o["member_id"]!!.jsonPrimitive.long
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun createPoll(
+        session: Session, me: Long, question: String, options: List<String>
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("question", question); put("created_by", me)
+        }
+        val (code, body) = restPost(
+            session, "/rest/v1/polls", payload.toString(), "return=representation"
+        )
+        check(code in 200..299) { "poll create failed: $code" }
+        val id = Json.parseToJsonElement(body).jsonArray[0]
+            .jsonObject["id"]!!.jsonPrimitive.long
+        options.forEach { label ->
+            val op = buildJsonObject {
+                put("poll_id", id); put("label", label)
+            }
+            val (c2, _) = restPost(session, "/rest/v1/poll_options", op.toString())
+            check(c2 in 200..299) { "poll option failed: $c2" }
+        }
+    }
+
+    suspend fun deletePoll(session: Session, pollId: Long): Result<Unit> = runCatching {
+        restDelete(session, "/rest/v1/polls", mapOf("id" to "eq.$pollId"))
+    }
+
+    suspend fun votePoll(
+        session: Session, pollId: Long, optionId: Long, me: Long
+    ): Result<Unit> = runCatching {
+        restDelete(
+            session, "/rest/v1/poll_votes",
+            mapOf("poll_id" to "eq.$pollId", "member_id" to "eq.$me")
+        )
+        val payload = buildJsonObject {
+            put("poll_id", pollId); put("option_id", optionId); put("member_id", me)
+        }
+        val (code, _) = restPost(session, "/rest/v1/poll_votes", payload.toString())
+        check(code in 200..299) { "vote failed: $code" }
+    }
+
+    data class MvpBallot(val id: Long, val title: String, val createdAt: String)
+    data class MvpVote(val ballotId: Long, val nomineeId: Long, val voterId: Long)
+
+    suspend fun mvpBallots(session: Session): List<MvpBallot> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/mvp_ballots",
+            mapOf("select" to "id,title,created_at", "order" to "created_at.desc", "limit" to "10")
+        )
+        rows.map {
+            val o = it.jsonObject
+            MvpBallot(
+                id = o["id"]!!.jsonPrimitive.long,
+                title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
+                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun mvpVotes(session: Session, ballotId: Long): List<MvpVote> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/mvp_votes",
+            mapOf("select" to "ballot_id,nominee_id,voter_id", "ballot_id" to "eq.$ballotId")
+        )
+        rows.map {
+            val o = it.jsonObject
+            MvpVote(
+                ballotId = o["ballot_id"]!!.jsonPrimitive.long,
+                nomineeId = o["nominee_id"]!!.jsonPrimitive.long,
+                voterId = o["voter_id"]!!.jsonPrimitive.long
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun createBallot(session: Session, me: Long, title: String): Result<Unit> =
+        runCatching {
+            val payload = buildJsonObject {
+                put("title", title); put("created_by", me)
+            }
+            val (code, _) = restPost(session, "/rest/v1/mvp_ballots", payload.toString())
+            check(code in 200..299) { "ballot create failed: $code" }
+        }
+
+    suspend fun deleteBallot(session: Session, ballotId: Long): Result<Unit> = runCatching {
+        restDelete(session, "/rest/v1/mvp_ballots", mapOf("id" to "eq.$ballotId"))
+    }
+
+    suspend fun voteMvp(
+        session: Session, ballotId: Long, nomineeId: Long, me: Long
+    ): Result<Unit> = runCatching {
+        restDelete(
+            session, "/rest/v1/mvp_votes",
+            mapOf("ballot_id" to "eq.$ballotId", "voter_id" to "eq.$me")
+        )
+        val payload = buildJsonObject {
+            put("ballot_id", ballotId); put("nominee_id", nomineeId); put("voter_id", me)
+        }
+        val (code, _) = restPost(session, "/rest/v1/mvp_votes", payload.toString())
+        check(code in 200..299) { "mvp vote failed: $code" }
+    }
+
+    data class MemberReport(
+        val id: Long, val reporterId: Long, val reportedId: Long,
+        val reason: String, val createdAt: String
+    )
+
+    suspend fun reportMember(
+        session: Session, reporterId: Long, reportedId: Long, reason: String
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("reporter_id", reporterId); put("reported_id", reportedId)
+            put("reason", reason)
+        }
+        val (code, _) = restPost(session, "/rest/v1/member_reports", payload.toString())
+        check(code in 200..299) { "report failed: $code" }
+    }
+
+    suspend fun memberReports(session: Session): List<MemberReport> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/member_reports",
+            mapOf(
+                "select" to "id,reporter_id,reported_id,reason,created_at",
+                "order" to "created_at.desc", "limit" to "50"
+            )
+        )
+        rows.map {
+            val o = it.jsonObject
+            MemberReport(
+                id = o["id"]!!.jsonPrimitive.long,
+                reporterId = o["reporter_id"]!!.jsonPrimitive.long,
+                reportedId = o["reported_id"]!!.jsonPrimitive.long,
+                reason = o["reason"]?.jsonPrimitive?.contentOrNull ?: "",
+                createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun deleteReport(session: Session, id: Long): Result<Unit> = runCatching {
+        restDelete(session, "/rest/v1/member_reports", mapOf("id" to "eq.$id"))
+    }
+
+    // President console: remove a member row (same as the website
+    // console; the Auth user is separate and stays unless deleted in
+    // the Supabase dashboard).
+    suspend fun deleteMemberRow(session: Session, memberId: Long): Result<Unit> =
+        runCatching {
+            restDelete(session, "/rest/v1/members", mapOf("id" to "eq.$memberId"))
+        }
+
+    data class LegacyEntry(val id: Long, val memberId: Long, val tournamentId: String)
+
+    suspend fun legacyEntries(session: Session): List<LegacyEntry> = runCatching {
+        val rows = restGet(
+            session, "/rest/v1/tournament_entries",
+            mapOf(
+                "select" to "id,member_id,tournament_id",
+                "tournament_id" to "eq.efootball-tournament-legacy",
+                "order" to "created_at.asc", "limit" to "200"
+            )
+        )
+        rows.map {
+            val o = it.jsonObject
+            LegacyEntry(
+                id = o["id"]!!.jsonPrimitive.long,
+                memberId = o["member_id"]!!.jsonPrimitive.long,
+                tournamentId = o["tournament_id"]?.jsonPrimitive?.contentOrNull ?: ""
+            )
+        }
+    }.getOrDefault(emptyList())
+
+    suspend fun presidentRemoveEntry(
+        session: Session, entryId: Long, tournamentName: String
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("p_entry_id", entryId); put("p_tournament_name", tournamentName)
+        }
+        val (code, body) = restPost(
+            session, "/rest/v1/rpc/president_remove_entry", payload.toString()
+        )
+        check(code in 200..299) { "remove entry failed: $code $body" }
+    }
 }

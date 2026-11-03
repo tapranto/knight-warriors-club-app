@@ -213,6 +213,9 @@ fun MemberProfileScreen(
     var friendBusy by remember { mutableStateOf(false) }
     var record by remember { mutableStateOf<List<Int>>(listOf(0, 0, 0, 0)) }
     var awardPlayerDialog by remember { mutableStateOf(false) }
+    // beta42: report-a-member (Part 19 member_reports)
+    var reportDialog by remember { mutableStateOf(false) }
+    var reportReason by remember { mutableStateOf("") }
     var removePlayerHonour by remember { mutableStateOf<ClubApi.MemberHonour?>(null) }
     val isPresident = me.role.equals("President", ignoreCase = true)
     var loaded by remember { mutableStateOf(false) }
@@ -241,6 +244,42 @@ fun MemberProfileScreen(
         loaded = true
     }
     LaunchedEffect(memberId) { loadProfile() }
+
+    if (reportDialog) {
+        AlertDialog(
+            onDismissRequest = { reportDialog = false },
+            title = { Text("Report this member") },
+            text = {
+                Column {
+                    Text(
+                        "The President will see your report. Reports are not public.",
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ClubTextField("Reason", reportReason, onChange = { reportReason = it })
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = reportReason.isNotBlank(),
+                    onClick = {
+                        reportDialog = false
+                        scope.launch {
+                            val res = ClubApi.reportMember(
+                                session, me.id, memberId, reportReason.trim()
+                            )
+                            note = if (res.isSuccess) "Report sent to the President."
+                            else "Report failed — try again."
+                            reportReason = ""
+                        }
+                    }
+                ) { Text("SEND REPORT") }
+            },
+            dismissButton = {
+                TextButton(onClick = { reportDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
 
     val m = member
     val own = memberId == me.id
@@ -625,6 +664,15 @@ fun MemberProfileScreen(
                     Text(
                         "🏆 PLAYER CARD", color = GoldLight,
                         fontWeight = FontWeight.Bold, fontSize = 12.sp
+                    )
+                }
+            }
+            if (!own) {
+                item {
+                    Text(
+                        "🚩 Report this member",
+                        color = Color(0xFFC4CEDC), fontSize = 12.sp,
+                        modifier = Modifier.clickable { reportDialog = true }.padding(4.dp)
                     )
                 }
             }

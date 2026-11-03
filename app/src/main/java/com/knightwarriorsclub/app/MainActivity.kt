@@ -106,6 +106,9 @@ private sealed interface Screen {
     data object Everyone : Screen
     data object Notifications : Screen
     data object Search : Screen
+    data object Feed : Screen
+    data object Polls : Screen
+    data object Console : Screen
     data class Chat(val partner: Member) : Screen
     // v0.4.0 routes
     data class Profile(val memberId: Long, val backTo: Screen) : Screen
@@ -302,6 +305,9 @@ fun ClubApp(
     BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Notifications) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Search) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Feed) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Polls) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Console) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Everyone) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.ChatDetails) {
@@ -610,6 +616,24 @@ fun ClubApp(
                                 screen = Screen.Profile(m.id, Screen.Notifications)
                             }
                         )
+                        is Screen.Feed -> FeedScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs },
+                            onOpenProfile = { id ->
+                                screen = Screen.Profile(id, Screen.Feed)
+                            }
+                        )
+                        is Screen.Polls -> PollsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs }
+                        )
+                        is Screen.Console -> PresidentConsoleScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs },
+                            onOpenProfile = { id ->
+                                screen = Screen.Profile(id, Screen.Console)
+                            }
+                        )
                         is Screen.Search -> MemberSearchScreen(
                             session = s,
                             onBack = { screen = Screen.Tabs },
@@ -758,6 +782,9 @@ fun ClubApp(
                                         },
                                         onOpenSquads = { screen = Screen.Squads },
                                         onOpenAllSquads = { screen = Screen.AllSquads },
+                                        onOpenFeed = { screen = Screen.Feed },
+                                        onOpenPolls = { screen = Screen.Polls },
+                                        onOpenConsole = { screen = Screen.Console },
                                         onOpenWeb = { url, title ->
                                             screen = Screen.WebPage(url, title)
                                         },
@@ -1194,6 +1221,9 @@ private fun MorePanel(
     onOpenProfile: (Long) -> Unit = {},
     onOpenSquads: () -> Unit = {},
     onOpenAllSquads: () -> Unit = {},
+    onOpenFeed: () -> Unit = {},
+    onOpenPolls: () -> Unit = {},
+    onOpenConsole: () -> Unit = {},
     onOpenWeb: (String, String) -> Unit = { _, _ -> },
     hasCustomBg: Boolean,
     onPickBackground: () -> Unit,
@@ -1244,8 +1274,11 @@ private fun MorePanel(
         }
         listOf(
             "Profile" to "Your member card & honours",
+            "Club Feed" to "Club posts from members",
+            "Polls & MVP" to "Vote in club polls & MVP",
             "My Squads" to "Your teams",
             "All Squads" to "Every squad in the club — President",
+            "President Console" to "Members, entries, reports — President",
             "Community" to "Meet the committee",
             "Leaderboard" to "Club rankings",
             "Tournaments" to "All club tournaments",
@@ -1254,7 +1287,7 @@ private fun MorePanel(
             "Settings" to "Sounds, vibration, app lock"
         ).filter { (t, _) ->
             // All Squads is the President's window on the whole club
-            t != "All Squads" ||
+            (t != "All Squads" && t != "President Console") ||
                 (me?.role?.equals("President", ignoreCase = true) == true)
         }.forEach { (t, s) ->
             item {
@@ -1267,6 +1300,9 @@ private fun MorePanel(
                         )
                         "My Squads" -> onOpenSquads()
                         "All Squads" -> onOpenAllSquads()
+                        "Club Feed" -> onOpenFeed()
+                        "Polls & MVP" -> onOpenPolls()
+                        "President Console" -> onOpenConsole()
                         "Leaderboard" -> onOpenWeb(
                             "https://knightwarriorsclub.com/#leaderboard", "Leaderboard"
                         )

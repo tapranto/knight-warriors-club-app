@@ -23,7 +23,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.layer.drawLayer
-import androidx.compose.ui.graphics.layer.rememberGraphicsLayer
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -86,7 +86,7 @@ fun PlayerCardScreen(
         Box(
             Modifier.fillMaxWidth()
                 .drawWithContent {
-                    graphicsLayer.record { drawContent() }
+                    graphicsLayer.record { this@drawWithContent.drawContent() }
                     drawLayer(graphicsLayer)
                 }
                 .clip(RoundedCornerShape(22.dp))
