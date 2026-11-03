@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.knightwarriorsclub.app
 
 import androidx.compose.foundation.Image
