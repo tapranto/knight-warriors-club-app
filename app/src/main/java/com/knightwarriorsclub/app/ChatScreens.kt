@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.ui.window.Dialog
@@ -619,6 +620,35 @@ fun EveryoneScreen(session: Session, onBack: () -> Unit) {
 
 // ── Chat thread ──────────────────────────────────────────────────────────
 
+// beta41: club stickers — sent as plain messages; a message that is
+// exactly one sticker renders BIG with no bubble (app side).
+val CLUB_STICKERS = listOf(
+    "⚔️", "🛡️", "🔥", "🏆", "🎮", "👑",
+    "⚡", "💪", "😤", "🐺", "🌙", "⭐"
+)
+
+@Composable
+fun StickerPanel(onPick: (String) -> Unit) {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color.White.copy(alpha = 0.12f))
+            .border(1.dp, GlassRim, RoundedCornerShape(18.dp))
+            .padding(10.dp)
+    ) {
+        CLUB_STICKERS.chunked(6).forEach { rowStickers ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                rowStickers.forEach { st ->
+                    Text(
+                        st, fontSize = 30.sp,
+                        modifier = Modifier.clickable { onPick(st) }.padding(4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ChatScreen(
     session: Session, me: Member, partner: Member,
@@ -640,6 +670,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var messages by remember { mutableStateOf<List<Dm>>(emptyList()) }
     var input by remember { mutableStateOf("") }
+    var showStickers by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var hasMore by remember { mutableStateOf(false) }
     var loadingOlder by remember { mutableStateOf(false) }
@@ -868,6 +899,7 @@ fun ChatScreen(
             }
             items(messages, key = { it.id }) { dm ->
                 val mine = dm.senderId == me.id
+                val isSticker = dm.body.trim() in CLUB_STICKERS
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start
@@ -876,12 +908,17 @@ fun ChatScreen(
                         Modifier.widthIn(max = 280.dp)
                             .clip(RoundedCornerShape(18.dp))
                             .background(
-                                if (mine) ownBubbleColor else Color.White.copy(alpha = 0.16f)
+                                if (isSticker) Color.Transparent
+                                else if (mine) ownBubbleColor
+                                else Color.White.copy(alpha = 0.16f)
                             )
-                            .border(1.dp, GlassRim, RoundedCornerShape(18.dp))
+                            .then(
+                                if (isSticker) Modifier
+                                else Modifier.border(1.dp, GlassRim, RoundedCornerShape(18.dp))
+                            )
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
-                        Text(dm.body, color = Color.White, fontSize = 14.sp)
+                        Text(dm.body, color = Color.White, fontSize = if (isSticker) 40.sp else 14.sp)
                         Row(
                             Modifier.align(Alignment.End),
                             verticalAlignment = Alignment.CenterVertically
@@ -925,6 +962,21 @@ fun ChatScreen(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)
             )
         } else {
+        if (showStickers) {
+            StickerPanel { sticker ->
+                showStickers = false
+                error = null
+                scope.launch {
+                    val res = ClubApi.sendDm(session, me.id, partner.id, sticker)
+                    if (res.isSuccess) {
+                        ClubApi.sendMessagePushDm(session, partner.id, sticker)
+                        runCatching { loadLatest() }
+                    } else {
+                        error = "Couldn't send — check connection and retry."
+                    }
+                }
+            }
+        }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp)
                 .clip(RoundedCornerShape(26.dp))
@@ -933,6 +985,12 @@ fun ChatScreen(
                 .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Icon(
+                Icons.Filled.EmojiEmotions, contentDescription = "Stickers",
+                tint = if (showStickers) GoldLight else Color(0xFFC4CEDC),
+                modifier = Modifier.size(26.dp).clickable { showStickers = !showStickers }
+            )
+            Spacer(Modifier.width(4.dp))
             OutlinedTextField(
                 value = input, onValueChange = { input = it },
                 placeholder = { Text("Message…", color = Color(0xFFC4CEDC)) },

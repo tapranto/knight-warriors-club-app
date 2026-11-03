@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
+import com.knightwarriorsclub.app.data.AppPrefs
 import com.knightwarriorsclub.app.data.BackgroundStore
 import com.knightwarriorsclub.app.data.ChatPrefs
 import com.knightwarriorsclub.app.data.ClubApi
@@ -61,6 +63,7 @@ private fun memberSince(createdAt: String?): String? = createdAt?.let {
 /** Loads a remote image (member photos live in Supabase Storage). */
 @Composable
 fun rememberRemoteBitmap(url: String?): android.graphics.Bitmap? {
+    val context = LocalContext.current
     var bmp by remember(url) { mutableStateOf(url?.let { avatarBitmapCache[it] }) }
     LaunchedEffect(url) {
         if (url != null && bmp == null) {
@@ -69,7 +72,14 @@ fun rememberRemoteBitmap(url: String?): android.graphics.Bitmap? {
                     val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
                     conn.connectTimeout = 8000
                     conn.readTimeout = 8000
-                    conn.inputStream.use { android.graphics.BitmapFactory.decodeStream(it) }
+                    // beta41: low-data mode decodes pictures at quarter
+                    // size (avatars and logos are small on screen anyway).
+                    val opts = android.graphics.BitmapFactory.Options().apply {
+                        if (AppPrefs.lowData(context)) inSampleSize = 4
+                    }
+                    conn.inputStream.use {
+                        android.graphics.BitmapFactory.decodeStream(it, null, opts)
+                    }
                 }.getOrNull()?.also { avatarBitmapCache[url] = it }
             }
         }
@@ -159,7 +169,7 @@ private fun gameSymbol(game: String): String = when (game) {
 }
 
 @Composable
-private fun StatPill(text: String) {
+fun StatPill(text: String) {
     Box(
         Modifier.clip(RoundedCornerShape(50))
             .background(Color.White.copy(alpha = 0.13f))
@@ -176,6 +186,7 @@ private fun StatPill(text: String) {
  * from the database; gold pen on your own to change it), stat pills,
  * game cards, honours, and the SQUAD line for every member.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemberProfileScreen(
     session: Session, me: Member, memberId: Long,
@@ -183,6 +194,7 @@ fun MemberProfileScreen(
     onMessage: (Member) -> Unit = {},
     onOpenProfile: (Member) -> Unit = {},
     onOpenSquad: (Squad) -> Unit = {},
+    onOpenPlayerCard: (Member) -> Unit = {},
     onCall: (Member, String) -> Unit = { _, _ -> },
     onEdit: () -> Unit = {},
     onMeChanged: () -> Unit = {}
@@ -207,7 +219,11 @@ fun MemberProfileScreen(
     var photoBusy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(memberId) {
+    var refreshing by remember { mutableStateOf(false) }
+    // beta41 (Pranto): pull down on the profile to reload it — the
+    // friend state used to go stale ("Request sent" after acceptance)
+    // until you left and came back.
+    suspend fun loadProfile() {
         val mm = ClubApi.memberById(session, memberId)
         member = mm
         games = ClubApi.memberGames(session, memberId)
@@ -224,6 +240,7 @@ fun MemberProfileScreen(
         }
         loaded = true
     }
+    LaunchedEffect(memberId) { loadProfile() }
 
     val m = member
     val own = memberId == me.id
@@ -370,7 +387,18 @@ fun MemberProfileScreen(
             Text("This profile could not be loaded.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
             return@Column
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                scope.launch {
+                    refreshing = true
+                    loadProfile()
+                    refreshing = false
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        ) {
+        LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
                 // cover banner + overlapping photo
                 val coverBmp = rememberRemoteBitmap(m.coverUrl)
@@ -513,6 +541,19 @@ fun MemberProfileScreen(
                 }
             } else {
                 item {
+                    // beta41 (Pranto): MESSAGE and the friend button share
+                    // ONE row; the call/video round buttons are gone from
+                    // the profile (calls live inside the chat). Friend
+                    // labels are shortened to fit the half row.
+                    val rel = friendRel
+                    val sentByMe = rel != null && rel.status == "pending" && rel.requesterId == me.id
+                    val label = when {
+                        rel == null || rel.status == "declined" -> "＋ ADD FRIEND"
+                        rel.status == "accepted" -> "✓ FRIENDS"
+                        sentByMe -> "REQUEST SENT"
+                        else -> "ACCEPT REQUEST"
+                    }
+                    val goldBtn = label == "＋ ADD FRIEND" || label == "ACCEPT REQUEST"
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         Box(
                             Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(Gold)
@@ -523,40 +564,7 @@ fun MemberProfileScreen(
                             Text("MESSAGE", color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         Box(
-                            Modifier.size(44.dp).clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.15f))
-                                .border(1.dp, GlassRim, CircleShape)
-                                .clickable { onCall(m, "voice") },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Filled.Call, contentDescription = "Voice call", tint = GoldLight, modifier = Modifier.size(20.dp))
-                        }
-                        Box(
-                            Modifier.size(44.dp).clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.15f))
-                                .border(1.dp, GlassRim, CircleShape)
-                                .clickable { onCall(m, "video") },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(Icons.Filled.Videocam, contentDescription = "Video call", tint = GoldLight, modifier = Modifier.size(22.dp))
-                        }
-                    }
-                }
-            }
-            if (!own) {
-                item {
-                    // beta37: friendship action for other members' profiles
-                    val rel = friendRel
-                    val sentByMe = rel != null && rel.status == "pending" && rel.requesterId == me.id
-                    val label = when {
-                        rel == null || rel.status == "declined" -> "＋ ADD FRIEND"
-                        rel.status == "accepted" -> "✓ FRIENDS — TAP TO REMOVE"
-                        sentByMe -> "REQUEST SENT"
-                        else -> "ACCEPT FRIEND REQUEST"
-                    }
-                    val goldBtn = label == "＋ ADD FRIEND" || label == "ACCEPT FRIEND REQUEST"
-                    Box(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            Modifier.weight(1f).clip(RoundedCornerShape(14.dp))
                             .background(if (goldBtn) Gold else Color.White.copy(alpha = 0.12f))
                             .then(
                                 if (goldBtn) Modifier
@@ -602,6 +610,22 @@ fun MemberProfileScreen(
                             fontWeight = FontWeight.Bold, fontSize = 12.sp
                         )
                     }
+                    }
+                }
+            }
+            item {
+                // beta41: Player Card entry (every profile)
+                Box(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, Gold, RoundedCornerShape(14.dp))
+                        .clickable { onOpenPlayerCard(m) }
+                        .padding(vertical = 11.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "🏆 PLAYER CARD", color = GoldLight,
+                        fontWeight = FontWeight.Bold, fontSize = 12.sp
+                    )
                 }
             }
             item {
@@ -771,6 +795,7 @@ fun MemberProfileScreen(
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
+        }
         }
     }
 }
@@ -1308,7 +1333,9 @@ fun MemberSearchScreen(
         runCatching { members = ClubApi.allMembers(session) }
     }
     val results = remember(query, members) {
-        if (query.isBlank()) members
+        // Pranto (2026-11-03): no list on open — results appear only
+        // once he starts typing.
+        if (query.isBlank()) emptyList()
         else members.filter {
             it.fullName.contains(query, ignoreCase = true) ||
                 (it.username?.contains(query, ignoreCase = true) == true)
@@ -1324,6 +1351,12 @@ fun MemberSearchScreen(
         Spacer(Modifier.height(6.dp))
         ClubTextField("Name or @username", query, onChange = { query = it })
         Spacer(Modifier.height(12.dp))
+        if (query.isBlank()) {
+            Text(
+                "Type a name or @username to search.",
+                color = Color(0xFFC4CEDC), fontSize = 13.sp
+            )
+        }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(results, key = { it.id }) { m ->
                 GlassCard(Modifier.fillMaxWidth().clickable { onOpenProfile(m.id) }) {

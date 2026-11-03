@@ -11,6 +11,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -18,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import com.knightwarriorsclub.app.data.AppPrefs
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -190,6 +196,30 @@ fun SettingsScreen(
                     ) {
                         Text("RESET TO CLUB DEFAULT", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
+                }
+            }
+        }
+        item {
+            // beta41: low-data mode toggle (AppPrefs, this phone only)
+            val ctx = LocalContext.current
+            var lowData by remember { mutableStateOf(AppPrefs.lowData(ctx)) }
+            GlassCard(Modifier.fillMaxWidth()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Low-data mode", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Pictures load at quarter size — handy on slow or metered connections.",
+                            color = Color(0xFFC4CEDC), fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = lowData,
+                        onCheckedChange = {
+                            lowData = it
+                            AppPrefs.setLowData(ctx, it)
+                        }
+                    )
                 }
             }
         }

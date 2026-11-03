@@ -109,6 +109,7 @@ private sealed interface Screen {
     data class Chat(val partner: Member) : Screen
     // v0.4.0 routes
     data class Profile(val memberId: Long, val backTo: Screen) : Screen
+    data class PlayerCard(val memberId: Long, val backTo: Screen) : Screen
     data object ProfileEdit : Screen
     data class ChatDetails(val partner: Member) : Screen
     data object Squads : Screen
@@ -305,6 +306,9 @@ fun ClubApp(
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.ChatDetails) {
         screen = Screen.Chat((screen as Screen.ChatDetails).partner)
+    }
+    BackHandler(enabled = session != null && screen is Screen.PlayerCard) {
+        screen = (screen as Screen.PlayerCard).backTo
     }
     BackHandler(enabled = session != null && screen is Screen.Profile) {
         screen = (screen as Screen.Profile).backTo
@@ -613,6 +617,10 @@ fun ClubApp(
                                 screen = Screen.Profile(id, Screen.Search)
                             }
                         )
+                        is Screen.PlayerCard -> PlayerCardScreen(
+                            session = s, memberId = scr.memberId,
+                            onBack = { screen = scr.backTo }
+                        )
                         is Screen.Profile -> MemberProfileScreen(
                             session = s, me = myProfile ?: return@Column,
                             memberId = scr.memberId,
@@ -623,6 +631,9 @@ fun ClubApp(
                             },
                             onOpenSquad = { sq ->
                                 screen = Screen.SquadDetails(sq, scr)
+                            },
+                            onOpenPlayerCard = { pm ->
+                                screen = Screen.PlayerCard(pm.id, scr)
                             },
                             onCall = { m, k -> callController?.startCall(m, k) },
                             onEdit = { screen = Screen.ProfileEdit },
