@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,7 +44,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -79,6 +85,9 @@ import kotlinx.coroutines.launch
  */
 
 val Gold = Color(0xFFD4A017)
+// the website brand font (Luckiest Guy, --font-tag on the site) —
+// header wordmark only, Pranto 2026-11-03
+val BrandFont = FontFamily(Font(R.font.luckiest_guy))
 val GoldLight = Color(0xFFF2C33B)
 val Ink = Color(0xFF0A101C)
 val GlassFill = Color.White.copy(alpha = 0.13f)
@@ -96,6 +105,7 @@ private sealed interface Screen {
     data object Inbox : Screen
     data object Everyone : Screen
     data object Notifications : Screen
+    data object Search : Screen
     data class Chat(val partner: Member) : Screen
     // v0.4.0 routes
     data class Profile(val memberId: Long, val backTo: Screen) : Screen
@@ -290,6 +300,7 @@ fun ClubApp(
     }
     BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Notifications) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Search) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Everyone) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.ChatDetails) {
@@ -595,6 +606,13 @@ fun ClubApp(
                                 screen = Screen.Profile(m.id, Screen.Notifications)
                             }
                         )
+                        is Screen.Search -> MemberSearchScreen(
+                            session = s,
+                            onBack = { screen = Screen.Tabs },
+                            onOpenProfile = { id ->
+                                screen = Screen.Profile(id, Screen.Search)
+                            }
+                        )
                         is Screen.Profile -> MemberProfileScreen(
                             session = s, me = myProfile ?: return@Column,
                             memberId = scr.memberId,
@@ -669,13 +687,14 @@ fun ClubApp(
                             squad = scr.squad,
                             onBack = { screen = scr.backTo },
                             onGone = { screen = Screen.Squads },
-                            onOpenChat = { screen = Screen.SquadChat(scr.squad, scr) }
+                            onOpenChat = { screen = Screen.SquadChat(scr.squad, scr) },
+                            onOpenProfile = { id -> screen = Screen.Profile(id, scr) }
                         )
                         is Screen.WebPage -> Column(Modifier.fillMaxSize()) {
                             // hybrid pages keep the APP header (logo, club
                             // name, bell, envelope) — Pranto, 2026-11-02;
                             // the Android Back button returns to the tabs
-                            ClubHeader(unreadTotal, notifUnread, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
+                            ClubHeader(unreadTotal, notifUnread, onSearchClick = { screen = Screen.Search }, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             WebPageView(
                                 scr.url, Modifier.weight(1f).fillMaxWidth(),
                                 bridgeSession = s, poolKey = "page-" + scr.url
@@ -690,7 +709,7 @@ fun ClubApp(
                             }
                         }
                         is Screen.Tabs -> {
-                            ClubHeader(unreadTotal, notifUnread, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
+                            ClubHeader(unreadTotal, notifUnread, onSearchClick = { screen = Screen.Search }, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             Box(Modifier.weight(1f)) {
                                 when (tab) {
                                     Tab.Home -> HomeScreen(
@@ -846,6 +865,7 @@ private fun DmBanner(
 @Composable
 private fun ClubHeader(
     unreadTotal: Int, notifUnread: Int = 0,
+    onSearchClick: () -> Unit = {},
     onBellClick: () -> Unit = {},
     onEnvelopeClick: () -> Unit
 ) {
@@ -863,9 +883,17 @@ private fun ClubHeader(
         )
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
-            Text("KNIGHT WARRIORS CLUB", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("KNIGHT WARRIORS", color = GoldLight, fontFamily = BrandFont, fontSize = 18.sp)
             Text("EST. 2023 • ESPORTS CLUB", color = Color(0xFFC4CEDC), fontSize = 9.sp)
         }
+        // beta39 (Pranto): search beside the bell.
+        Box(Modifier.clickable { onSearchClick() }) {
+            Icon(
+                Icons.Filled.Search, contentDescription = "Search members",
+                tint = Color.White, modifier = Modifier.size(26.dp)
+            )
+        }
+        Spacer(Modifier.width(14.dp))
         // bell LEFT, envelope RIGHT — Pranto's header order.
         // beta37: the bell now opens the Notifications page and carries
         // its own unread badge (it was decorative before — Pranto).
@@ -974,9 +1002,22 @@ private fun HomeScreen(
     ) {
         item {
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("KNIGHT WARRIORS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 25.sp)
-                Text("CLUB", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 25.sp)
-                Spacer(Modifier.height(6.dp))
+                // beta39 (Pranto): full name on ONE line, motto under
+                // it, small line kept as it was.
+                Text(
+                    buildAnnotatedString {
+                        withStyle(SpanStyle(color = Color.White)) { append("KNIGHT WARRIORS ") }
+                        withStyle(SpanStyle(color = GoldLight)) { append("CLUB") }
+                    },
+                    fontWeight = FontWeight.Bold, fontSize = 23.sp, maxLines = 1
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Play \u2022 Compete \u2022 Conquer",
+                    color = GoldLight, fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp, letterSpacing = 1.sp
+                )
+                Spacer(Modifier.height(2.dp))
                 Text("Play together. Rise together.", color = Color(0xFFFFF4E4), fontSize = 13.sp)
             }
         }

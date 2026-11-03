@@ -710,7 +710,8 @@ fun SquadDetailsScreen(
     session: Session, me: Member, squad: Squad,
     onBack: () -> Unit,
     onGone: () -> Unit,
-    onOpenChat: () -> Unit
+    onOpenChat: () -> Unit,
+    onOpenProfile: (Long) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val isCaptain = squad.captainId == me.id
@@ -1174,10 +1175,12 @@ fun SquadDetailsScreen(
                             .padding(horizontal = 10.dp, vertical = 6.dp)
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 28)
+                            Box(Modifier.clickable { onOpenProfile(row.member.id) }) {
+                                AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 28)
+                            }
                             Spacer(Modifier.width(8.dp))
                             Row(
-                                Modifier.weight(1f),
+                                Modifier.weight(1f).clickable { onOpenProfile(row.member.id) },
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(

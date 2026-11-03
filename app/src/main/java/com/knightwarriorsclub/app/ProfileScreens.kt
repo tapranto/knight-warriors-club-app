@@ -420,25 +420,9 @@ fun MemberProfileScreen(
                         color = Color(0xFFC4CEDC), fontSize = 13.sp
                     )
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            Modifier.clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (m.role == "President") Gold
-                                    else Color.White.copy(alpha = 0.18f)
-                                )
-                                .padding(horizontal = 9.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                m.role.uppercase(),
-                                color = if (m.role == "President") Ink else Color.White,
-                                fontSize = 10.sp, fontWeight = FontWeight.Bold
-                            )
-                        }
-                        memberSince(m.createdAt)?.let {
-                            Spacer(Modifier.width(10.dp))
-                            Text("Member since $it", color = Color(0xFFC4CEDC), fontSize = 12.sp)
-                        }
+                    // beta39 (Pranto): the MEMBER role pill is removed.
+                    memberSince(m.createdAt)?.let {
+                        Text("Member since $it", color = Color(0xFFC4CEDC), fontSize = 12.sp)
                     }
                     if (!m.bio.isNullOrBlank()) {
                         Spacer(Modifier.height(10.dp))
@@ -447,10 +431,9 @@ fun MemberProfileScreen(
                     Spacer(Modifier.height(12.dp))
                     // beta37: fuller stat set — games, squads, member number,
                     // favourite game, game IDs and friends at a glance.
-                    val pills = mutableListOf(
-                        "${games.size} Games",
-                        "Member #${m.id}"
-                    )
+                    // beta39 (Pranto): no Games-count pill any more;
+                    // Member # lives in the row of three below.
+                    val pills = mutableListOf<String>()
                     if (!m.favouriteGame.isNullOrBlank()) pills.add("★ ${m.favouriteGame}")
                     val idCount = games.count { it.second != null }
                     if (idCount > 0) pills.add("$idCount Game IDs")
@@ -458,7 +441,12 @@ fun MemberProfileScreen(
                     // beta38 (Pranto): the squad NAME lives here, not a
                     // count \u2014 and tapping it opens the squad page.
                     val mySquad = squads.firstOrNull()?.first
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        StatPill("Member #${m.id}")
                         if (mySquad != null) {
                             Box(
                                 Modifier.clip(RoundedCornerShape(50))
@@ -475,6 +463,19 @@ fun MemberProfileScreen(
                         } else {
                             StatPill("No Squad")
                         }
+                        if (squads.any { it.first.captainId == m.id }) {
+                            Box(
+                                Modifier.clip(RoundedCornerShape(50))
+                                    .background(Gold.copy(alpha = 0.16f))
+                                    .border(1.dp, Gold, RoundedCornerShape(50))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    "🛡️ Squad Captain",
+                                    color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 11.sp
+                                )
+                            }
+                        }
                     }
                     Spacer(Modifier.height(8.dp))
                     pills.chunked(3).forEach { rowPills ->
@@ -485,7 +486,6 @@ fun MemberProfileScreen(
                     }
                     // badges derived from what the member actually is/has
                     val badges = mutableListOf<String>()
-                    if (squads.any { it.first.captainId == m.id }) badges.add("🛡️ Squad Captain")
                     if (m.id <= 10L) badges.add("⚔️ Original Warrior")
                     if (games.size >= 3) badges.add("🎮 Multi-Game Player")
                     if (badges.isNotEmpty()) {
@@ -1289,6 +1289,57 @@ fun ChatDetailsScreen(
                 }
             }
             item { Spacer(Modifier.height(8.dp)) }
+        }
+    }
+}
+
+// beta39 (Pranto): native member search, opened from the header
+// magnifier. Type to filter every club member by name or @username;
+// tapping a result opens that member's profile.
+@Composable
+fun MemberSearchScreen(
+    session: Session,
+    onBack: () -> Unit,
+    onOpenProfile: (Long) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    var members by remember { mutableStateOf<List<Member>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        runCatching { members = ClubApi.allMembers(session) }
+    }
+    val results = remember(query, members) {
+        if (query.isBlank()) members
+        else members.filter {
+            it.fullName.contains(query, ignoreCase = true) ||
+                (it.username?.contains(query, ignoreCase = true) == true)
+        }
+    }
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            Text("Search members", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+        Spacer(Modifier.height(6.dp))
+        ClubTextField("Name or @username", query) { query = it }
+        Spacer(Modifier.height(12.dp))
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(results, key = { it.id }) { m ->
+                GlassCard(Modifier.fillMaxWidth().clickable { onOpenProfile(m.id) }) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AvatarImage(m.avatarUrl, m.fullName, 40.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text(m.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Text(
+                                m.username?.let { "@$it" } ?: m.role,
+                                color = Color(0xFFC4CEDC), fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
