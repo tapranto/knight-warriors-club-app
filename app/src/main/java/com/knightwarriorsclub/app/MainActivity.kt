@@ -340,6 +340,20 @@ fun ClubApp(
     }
     BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
+    // beta51 (Pranto): a hybrid page opened from a menu/card starts at
+    // its section HOME, not wherever its pooled WebView was left
+    LaunchedEffect(screen) {
+        val wp = screen as? Screen.WebPage
+        if (wp != null) {
+            val viewName = wp.url.substringAfter('#', "")
+                .substringBefore('/').substringBefore('?')
+            if (viewName.isNotBlank()) {
+                kotlinx.coroutines.delay(400)
+                WebPool.goHome("page-" + wp.url, viewName)
+            }
+        }
+    }
+
     // envelope badge = real unread DMs, bell badge = unread notifications;
     // both refreshed when back on the tabs
     LaunchedEffect(session, me, screen) {
@@ -743,6 +757,13 @@ fun ClubApp(
                             GlassTabBar(tab) { chosen ->
                                 tab = chosen
                                 screen = Screen.Tabs
+                                // beta51: entering a hybrid tab from a
+                                // web page also lands on its home view
+                                when (chosen) {
+                                    Tab.News -> WebPool.goHome("tab-news", "news")
+                                    Tab.Events -> WebPool.goHome("tab-events", "events")
+                                    else -> {}
+                                }
                             }
                         }
                         is Screen.Tabs -> {
@@ -817,7 +838,20 @@ fun ClubApp(
                                     )
                                 }
                             }
-                            GlassTabBar(tab) { tab = it }
+                            GlassTabBar(tab) { chosen ->
+                                // beta51 (Pranto): re-tapping the ACTIVE
+                                // hybrid tab returns to that section's
+                                // home page ("tap News again -> News page")
+                                if (chosen == tab) {
+                                    when (chosen) {
+                                        Tab.News -> WebPool.goHome("tab-news", "news")
+                                        Tab.Events -> WebPool.goHome("tab-events", "events")
+                                        else -> {}
+                                    }
+                                } else {
+                                    tab = chosen
+                                }
+                            }
                         }
                     }
                 }

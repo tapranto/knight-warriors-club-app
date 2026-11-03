@@ -69,6 +69,22 @@ object WebPool {
     fun isBridged(key: String): Boolean = key in bridged
     fun markBridged(key: String) { bridged.add(key) }
 
+    /** beta51 (Pranto): "tap News again -> back to the News page".
+     *  Re-tapping a hybrid entry point resets its pooled WebView to
+     *  the section's HOME view, through the site's own router — no
+     *  reload, the pooled page is reused. */
+    fun goHome(key: String, viewName: String) {
+        val v = views[key] ?: return
+        v.evaluateJavascript(
+            "(function(){try{" +
+                "if (typeof showView === 'function') { showView('" + viewName + "', true); }" +
+                "else { location.hash = '#" + viewName + "'; }" +
+                "window.scrollTo(0,0);" +
+                "}catch(e){}})();",
+            null
+        )
+    }
+
     /** Go back inside the pooled WebView; false when it has no history. */
     fun goBack(key: String): Boolean {
         val v = views[key] ?: return false
