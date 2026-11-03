@@ -613,12 +613,12 @@ fun ClubApp(
                             session = s, me = myProfile ?: return@Column,
                             onBack = { screen = Screen.Tabs },
                             onCreate = { screen = Screen.CreateSquad },
-                            onOpenSquad = { sq -> screen = Screen.SquadChat(sq, Screen.Squads) }
+                            onOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.Squads) }
                         )
                         is Screen.CreateSquad -> CreateSquadScreen(
                             session = s, me = myProfile ?: return@Column,
                             onBack = { screen = Screen.Squads },
-                            onCreated = { sq -> screen = Screen.SquadChat(sq, Screen.Squads) }
+                            onCreated = { sq -> screen = Screen.SquadDetails(sq, Screen.Squads) }
                         )
                         is Screen.SquadChat -> SquadChatScreen(
                             session = s, me = myProfile ?: return@Column,
@@ -631,7 +631,8 @@ fun ClubApp(
                             session = s, me = myProfile ?: return@Column,
                             squad = scr.squad,
                             onBack = { screen = scr.backTo },
-                            onGone = { screen = Screen.Squads }
+                            onGone = { screen = Screen.Squads },
+                            onOpenChat = { screen = Screen.SquadChat(scr.squad, scr) }
                         )
                         is Screen.WebPage -> Column(Modifier.fillMaxSize()) {
                             // hybrid pages keep the APP header (logo, club

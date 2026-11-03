@@ -507,7 +507,8 @@ private fun SquadChip(text: String) {
 fun SquadDetailsScreen(
     session: Session, me: Member, squad: Squad,
     onBack: () -> Unit,
-    onGone: () -> Unit
+    onGone: () -> Unit,
+    onOpenChat: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val isCaptain = squad.captainId == me.id
@@ -755,6 +756,8 @@ fun SquadDetailsScreen(
             Spacer(Modifier.height(10.dp))
             GoldButton("EDIT SQUAD", enabled = true) { editDialog = true }
         }
+        Spacer(Modifier.height(10.dp))
+        GoldButton("OPEN GROUP CHAT", enabled = true) { onOpenChat() }
         Spacer(Modifier.height(12.dp))
         Text(
             "MEMBERS (${rows.size})", color = GoldLight,

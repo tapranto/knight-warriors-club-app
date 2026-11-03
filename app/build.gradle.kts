@@ -14,8 +14,8 @@ android {
         applicationId = "com.knightwarriorsclub.app"
         minSdk = 26
         targetSdk = 34
-        versionCode = 31
-        versionName = "0.4.0-beta26"
+        versionCode = 32
+        versionName = "0.4.0-beta27"
     }
 
     buildTypes {
