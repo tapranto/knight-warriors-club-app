@@ -53,6 +53,7 @@ fun NotificationsScreen(
     onBack: () -> Unit,
     onOpenEveryone: () -> Unit,
     onOpenInbox: () -> Unit,
+    onOpenPolls: () -> Unit = {},
     onOpenProfile: (Member) -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -166,7 +167,11 @@ fun NotificationsScreen(
                 items(notifs, key = { it.id }) { n ->
                     GlassCard(
                         Modifier.fillMaxWidth().clickable {
-                            if (n.type == "broadcast") onOpenEveryone() else onOpenInbox()
+                            // poll/MVP notifications deep-link to the
+                            // Polls screen (beta45, Pranto)
+                            if (n.link == "polls") onOpenPolls()
+                            else if (n.type == "broadcast") onOpenEveryone()
+                            else onOpenInbox()
                         },
                         fill = if (n.isRead) GlassFill else Color.White.copy(alpha = 0.20f)
                     ) {

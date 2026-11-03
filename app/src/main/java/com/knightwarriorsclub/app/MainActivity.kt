@@ -612,6 +612,7 @@ fun ClubApp(
                             onBack = { screen = Screen.Tabs },
                             onOpenEveryone = { screen = Screen.Everyone },
                             onOpenInbox = { screen = Screen.Inbox },
+                            onOpenPolls = { screen = Screen.Polls },
                             onOpenProfile = { m ->
                                 screen = Screen.Profile(m.id, Screen.Notifications)
                             }

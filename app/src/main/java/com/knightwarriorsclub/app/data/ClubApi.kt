@@ -1781,6 +1781,29 @@ object ClubApi {
         check(code in 200..299) { "mvp vote failed: $code" }
     }
 
+    // Fan a bell notification out to many members in ONE insert
+    // (notifications insert is President-only, and the President is
+    // the one starting polls/ballots). Tapping it follows `link`.
+    suspend fun notifyAllMembers(
+        session: Session, memberIds: List<Long>,
+        title: String, body: String, link: String
+    ): Result<Unit> = runCatching {
+        if (memberIds.isEmpty()) return@runCatching
+        val rows = buildJsonArray {
+            memberIds.forEach { mid ->
+                add(buildJsonObject {
+                    put("member_id", mid)
+                    put("type", "info")
+                    put("title", title)
+                    put("body", body)
+                    put("link", link)
+                })
+            }
+        }
+        val (code, respBody) = restPost(session, "/rest/v1/notifications", rows.toString())
+        check(code in 200..299) { "notify failed: $code $respBody" }
+    }
+
     data class MemberReport(
         val id: Long, val reporterId: Long, val reportedId: Long,
         val reason: String, val createdAt: String

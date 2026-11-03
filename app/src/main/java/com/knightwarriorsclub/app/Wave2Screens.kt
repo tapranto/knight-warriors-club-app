@@ -336,7 +336,16 @@ fun PollsScreen(
                         createPollOpen = false
                         scope.launch {
                             val res = ClubApi.createPoll(session, me.id, question.trim(), opts)
-                            if (res.isSuccess) load() else note = "Poll creation failed."
+                            if (res.isSuccess) {
+                                // Pranto (beta45): everyone gets a bell
+                                // notification; tapping it opens Polls.
+                                ClubApi.notifyAllMembers(
+                                    session,
+                                    members.map { it.id }.filter { it != me.id },
+                                    "🗳️ New club poll", question.trim(), "polls"
+                                )
+                                load()
+                            } else note = "Poll creation failed."
                         }
                     }
                 ) { Text("CREATE") }
@@ -361,7 +370,14 @@ fun PollsScreen(
                         createBallotOpen = false
                         scope.launch {
                             val res = ClubApi.createBallot(session, me.id, title.trim())
-                            if (res.isSuccess) load() else note = "Ballot creation failed."
+                            if (res.isSuccess) {
+                                ClubApi.notifyAllMembers(
+                                    session,
+                                    members.map { it.id }.filter { it != me.id },
+                                    "🏆 MVP voting is open", title.trim(), "polls"
+                                )
+                                load()
+                            } else note = "Ballot creation failed."
                         }
                     }
                 ) { Text("CREATE") }
