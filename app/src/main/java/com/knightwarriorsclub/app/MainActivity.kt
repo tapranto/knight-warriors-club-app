@@ -354,6 +354,20 @@ fun ClubApp(
         }
     }
 
+    // beta52: ONE logout for every entry point — the More menu and
+    // the JS bridge's in-web Log out both land here. Clears the app
+    // session and the WebView's bridged website session together.
+    val doLogout: () -> Unit = {
+        store.clear()
+        android.webkit.WebStorage.getInstance().deleteAllData()
+        android.webkit.CookieManager.getInstance().removeAllCookies(null)
+        session = null
+        me = null
+        screen = Screen.Tabs
+        tab = Tab.Home
+        authView = "login"
+    }
+
     // envelope badge = real unread DMs, bell badge = unread notifications;
     // both refreshed when back on the tabs
     LaunchedEffect(session, me, screen) {
@@ -748,7 +762,12 @@ fun ClubApp(
                             ClubHeader(unreadTotal, notifUnread, onSearchClick = { screen = Screen.Search }, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             WebPageView(
                                 scr.url, Modifier.weight(1f).fillMaxWidth(),
-                                bridgeSession = s, poolKey = "page-" + scr.url
+                                bridgeSession = s, poolKey = "page-" + scr.url,
+                                onOpenInbox = { screen = Screen.Inbox },
+                                onOpenMyProfile = {
+                                    myProfile?.let { screen = Screen.Profile(it.id, scr) }
+                                },
+                                onAppLogout = doLogout
                             )
                             // Hybrid pages keep the bottom tab bar too
                             // (Pranto, 2026-11-02: it vanished on Community
@@ -792,11 +811,21 @@ fun ClubApp(
                                     // website pages shown inside the app
                                     Tab.News -> WebPageView(
                                         "https://knightwarriorsclub.com/#news",
-                                        bridgeSession = s, poolKey = "tab-news"
+                                        bridgeSession = s, poolKey = "tab-news",
+                                        onOpenInbox = { screen = Screen.Inbox },
+                                        onOpenMyProfile = {
+                                            myProfile?.let { screen = Screen.Profile(it.id, Screen.Tabs) }
+                                        },
+                                        onAppLogout = doLogout
                                     )
                                     Tab.Events -> WebPageView(
                                         "https://knightwarriorsclub.com/#events",
-                                        bridgeSession = s, poolKey = "tab-events"
+                                        bridgeSession = s, poolKey = "tab-events",
+                                        onOpenInbox = { screen = Screen.Inbox },
+                                        onOpenMyProfile = {
+                                            myProfile?.let { screen = Screen.Profile(it.id, Screen.Tabs) }
+                                        },
+                                        onAppLogout = doLogout
                                     )
                                     Tab.More -> MorePanel(
                                         me = myProfile,
@@ -823,18 +852,7 @@ fun ClubApp(
                                             BackgroundStore.clear(appContext)
                                             bgVersion++
                                         },
-                                        onLogout = {
-                                            store.clear()
-                                            // also sign the website (WebView) out:
-                                            // the bridged session lives in its storage
-                                            android.webkit.WebStorage.getInstance().deleteAllData()
-                                            android.webkit.CookieManager.getInstance().removeAllCookies(null)
-                                            session = null
-                                            me = null
-                                            screen = Screen.Tabs
-                                            tab = Tab.Home
-                                            authView = "login"
-                                        }
+                                        onLogout = doLogout
                                     )
                                 }
                             }

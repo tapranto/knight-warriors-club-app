@@ -85,11 +85,35 @@ object WebPool {
         )
     }
 
+    // beta52 (Pranto): in-web taps that must become NATIVE app
+    // actions — "Open my Inbox" opens the app Inbox, "My Profile"
+    // the app profile, and Log out logs out of the APP. The current
+    // WebPageView call site refreshes these on every composition.
+    var navInbox: (() -> Unit)? = null
+    var navProfile: (() -> Unit)? = null
+    var navLogout: (() -> Unit)? = null
+
     /** Go back inside the pooled WebView; false when it has no history. */
     fun goBack(key: String): Boolean {
         val v = views[key] ?: return false
         return if (v.canGoBack()) { v.goBack(); true } else false
     }
+}
+
+/** JavaScript bridge exposed to club pages as `window.KwcApp`.
+ *  Methods arrive on a background thread; hop to the main thread
+ *  before touching Compose state. */
+class KwcJsBridge {
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+
+    @android.webkit.JavascriptInterface
+    fun openInbox() { main.post { WebPool.navInbox?.invoke() } }
+
+    @android.webkit.JavascriptInterface
+    fun openProfile() { main.post { WebPool.navProfile?.invoke() } }
+
+    @android.webkit.JavascriptInterface
+    fun logout() { main.post { WebPool.navLogout?.invoke() } }
 }
 
 /**
@@ -99,17 +123,26 @@ object WebPool {
  * updated on the website (fixtures, results, joins) appears in the app
  * instantly, with no new APK. The website's tournament Join works here.
  */
-@SuppressLint("SetJavaScriptEnabled")
+@SuppressLint("SetJavaScriptEnabled", "AddJavascriptInterface")
 @Composable
 fun WebPageView(
     url: String, modifier: Modifier = Modifier,
-    bridgeSession: Session? = null, poolKey: String = url
+    bridgeSession: Session? = null, poolKey: String = url,
+    onOpenInbox: () -> Unit = {},
+    onOpenMyProfile: () -> Unit = {},
+    onAppLogout: () -> Unit = {}
 ) {
+    // the pooled WebView outlives this composition, so the JS bridge
+    // reads its handlers from the pool — refresh them every time
+    WebPool.navInbox = onOpenInbox
+    WebPool.navProfile = onOpenMyProfile
+    WebPool.navLogout = onAppLogout
     var progress by remember(poolKey) { mutableStateOf(100) }
     Box(modifier.background(Color(0xFF0A101C))) {
         AndroidView(
             factory = { ctx ->
                 WebPool.obtain(poolKey) ?: WebView(ctx).apply {
+                    addJavascriptInterface(KwcJsBridge(), "KwcApp")
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.loadWithOverviewMode = true
@@ -136,6 +169,36 @@ fun WebPageView(
                             // the app — its Explore links let members wander
                             // off the section they opened; in the app only
                             // that section shows.
+                            // beta52: route in-web Inbox / Profile /
+                            // Log-out taps to the NATIVE app screens.
+                            // Capture phase on document beats the site's
+                            // own delegated nav handler.
+                            view?.evaluateJavascript(
+                                """
+                                (function () {
+                                  if (window.__kwcNavBridge) return;
+                                  window.__kwcNavBridge = true;
+                                  document.addEventListener('click', function (e) {
+                                    if (!window.KwcApp || !e.target || !e.target.closest) return;
+                                    if (e.target.closest('#logoutBtn') || e.target.closest('.already-logout')) {
+                                      e.preventDefault(); e.stopPropagation();
+                                      KwcApp.logout(); return;
+                                    }
+                                    var el = e.target.closest('[data-nav]');
+                                    if (!el) return;
+                                    var nav = el.getAttribute('data-nav');
+                                    if (nav === 'inbox') {
+                                      e.preventDefault(); e.stopPropagation();
+                                      KwcApp.openInbox();
+                                    } else if (nav === 'profile') {
+                                      e.preventDefault(); e.stopPropagation();
+                                      KwcApp.openProfile();
+                                    }
+                                  }, true);
+                                })();
+                                """.trimIndent(),
+                                null
+                            )
                             view?.evaluateJavascript(
                                 """
                                 (function () {
