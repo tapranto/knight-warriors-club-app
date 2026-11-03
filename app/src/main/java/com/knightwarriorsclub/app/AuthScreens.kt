@@ -21,11 +21,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.autofill.ContentType
-import androidx.compose.ui.platform.LocalAutofillManager
+import androidx.compose.ui.autofill.AutofillNode
+import androidx.compose.ui.autofill.AutofillType
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAutofill
+import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.contentType
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -59,6 +62,21 @@ fun clubFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
+fun Modifier.clubAutofill(type: AutofillType, onFill: (String) -> Unit): Modifier {
+    val autofill = LocalAutofill.current
+    val node = remember(type) {
+        AutofillNode(autofillTypes = listOf(type), onFill = onFill)
+    }
+    LocalAutofillTree.current += node
+    return this
+        .onGloballyPositioned { node.boundingBox = it.boundsInWindow() }
+        .onFocusChanged { state ->
+            if (state.isFocused) autofill?.requestAutofillForNode(node)
+            else autofill?.cancelAutofillForNode(node)
+        }
+}
+
+@Composable
 fun ClubTextField(
     label: String,
     value: String,
@@ -68,7 +86,7 @@ fun ClubTextField(
     placeholder: String? = null,
     readOnly: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
-    contentType: ContentType? = null,
+    autofillType: AutofillType? = null,
     singleLine: Boolean = true
 ) {
     OutlinedTextField(
@@ -78,8 +96,8 @@ fun ClubTextField(
         trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
         modifier = modifier.fillMaxWidth().then(
-            if (contentType != null)
-                Modifier.semantics { this.contentType = contentType }
+            if (autofillType != null)
+                Modifier.clubAutofill(autofillType) { v -> onChange(v) }
             else Modifier
         ),
         colors = clubFieldColors()
@@ -93,7 +111,7 @@ fun PasswordField(
     value: String,
     onChange: (String) -> Unit,
     modifier: Modifier = Modifier,
-    contentType: ContentType = ContentType.Password
+    autofillType: AutofillType = AutofillType.Password
 ) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
@@ -111,7 +129,7 @@ fun PasswordField(
             }
         },
         modifier = modifier.fillMaxWidth()
-            .semantics { this.contentType = contentType },
+            .clubAutofill(autofillType) { v -> onChange(v) },
         colors = clubFieldColors()
     )
 }
@@ -187,7 +205,6 @@ fun RegisterScreen(
     var formError by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var showDobPicker by remember { mutableStateOf(false) }
-    val autofillManager = LocalAutofillManager.current
     val dobState = rememberDatePickerState(initialSelectedDateMillis = dobMillis)
 
     fun validate(): Boolean {
@@ -248,7 +265,7 @@ fun RegisterScreen(
             ClubTextField(
                 "Email *", email, { email = it },
                 keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                contentType = ContentType.EmailAddress
+                autofillType = AutofillType.EmailAddress
             )
             FieldError(errors["email"])
             Spacer(Modifier.height(10.dp))
@@ -337,13 +354,13 @@ fun RegisterScreen(
             Spacer(Modifier.height(10.dp))
             PasswordField(
                 "Password *", password, { password = it },
-                contentType = ContentType.NewPassword
+                autofillType = AutofillType.Password
             )
             FieldError(errors["password"])
             Spacer(Modifier.height(10.dp))
             PasswordField(
                 "Confirm password *", confirm, { confirm = it },
-                contentType = ContentType.NewPassword
+                autofillType = AutofillType.Password
             )
             FieldError(errors["confirm"])
             if (formError != null) {
@@ -372,10 +389,7 @@ fun RegisterScreen(
                                 is ClubApi.SignUpOutcome.CheckEmail -> onCheckEmail(email.trim())
                                 is ClubApi.SignUpOutcome.AlreadyRegistered ->
                                     formError = "This email already has an account — try logging in."
-                                is ClubApi.SignUpOutcome.SignedIn -> {
-                                    runCatching { autofillManager?.commit() }
-                                    onSignedIn(outcome.session)
-                                }
+                                is ClubApi.SignUpOutcome.SignedIn -> onSignedIn(outcome.session)
                             }
                         }
                         .onFailure {
@@ -425,7 +439,7 @@ fun ForgotPasswordScreen(onBack: () -> Unit) {
                 ClubTextField(
                     "Email", email, { email = it },
                     keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                    contentType = ContentType.EmailAddress
+                    autofillType = AutofillType.EmailAddress
                 )
                 if (error != null) {
                     Spacer(Modifier.height(10.dp))
