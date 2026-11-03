@@ -469,3 +469,89 @@ fun CheckEmailScreen(email: String, onBack: () -> Unit) {
         }
     }
 }
+
+// ── Verify signup code (OTP, after registering) ──────────────────────────
+
+@Composable
+fun VerifyCodeScreen(email: String, onVerified: (Session) -> Unit, onBack: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var code by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var note by remember { mutableStateOf<String?>(null) }
+
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        GlassCard(Modifier.fillMaxWidth().padding(horizontal = 22.dp)) {
+            Image(
+                painter = painterResource(R.drawable.club_logo),
+                contentDescription = "Knight Warriors Club logo",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(96.dp).clip(RoundedCornerShape(18.dp))
+                    .align(Alignment.CenterHorizontally)
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Enter your code", color = GoldLight, fontWeight = FontWeight.Bold,
+                fontSize = 17.sp, modifier = Modifier.align(Alignment.CenterHorizontally)
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "We sent a 6-digit confirmation code to $email. Type it here to " +
+                    "activate your account — the code works once and expires in 1 hour.",
+                color = Color(0xFFE8EDF4), fontSize = 13.sp
+            )
+            Spacer(Modifier.height(14.dp))
+            ClubTextField(
+                "Confirmation code", code,
+                { code = it.filter { ch -> ch.isDigit() }.take(6) },
+                keyboardType = KeyboardType.Number, placeholder = "123456"
+            )
+            if (error != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(error!!, color = Color(0xFFFF9B9B), fontSize = 12.sp)
+            }
+            if (note != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(note!!, color = Color(0xFF9BE29B), fontSize = 12.sp)
+            }
+            Spacer(Modifier.height(16.dp))
+            GoldButton(
+                if (busy) "VERIFYING…" else "VERIFY & ACTIVATE",
+                enabled = !busy && code.length == 6
+            ) {
+                busy = true
+                error = null
+                note = null
+                scope.launch {
+                    ClubApi.verifySignupOtp(email, code)
+                        .onSuccess { onVerified(it) }
+                        .onFailure {
+                            error = "That code is wrong or has expired — check the " +
+                                "newest email, or resend a fresh code."
+                        }
+                    busy = false
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Didn't get it? Resend code",
+                color = GoldLight, fontSize = 13.sp,
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+                    .clickable(enabled = !busy) {
+                        busy = true
+                        error = null
+                        note = null
+                        scope.launch {
+                            ClubApi.resendSignup(email)
+                                .onSuccess { note = "Fresh code sent — check your inbox (and spam folder)." }
+                                .onFailure { error = "Could not resend just now — wait a minute and try again." }
+                            busy = false
+                        }
+                    }
+                    .padding(vertical = 4.dp)
+            )
+            Spacer(Modifier.height(8.dp))
+            GoldButton("BACK TO SIGN IN", enabled = true) { onBack() }
+        }
+    }
+}

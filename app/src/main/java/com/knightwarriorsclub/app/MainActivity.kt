@@ -487,7 +487,7 @@ fun ClubApp(
                         onBack = { authView = "login" },
                         onCheckEmail = { email ->
                             registeredEmail = email
-                            authView = "checkemail"
+                            authView = "verifycode"
                         },
                         onSignedIn = { s ->
                             session = s
@@ -498,8 +498,15 @@ fun ClubApp(
                         }
                     )
                     "forgot" -> ForgotPasswordScreen(onBack = { authView = "login" })
-                    "checkemail" -> CheckEmailScreen(
+                    "verifycode" -> VerifyCodeScreen(
                         email = registeredEmail,
+                        onVerified = { s ->
+                            session = s
+                            store.save(s)
+                            scope.launch {
+                                me = runCatching { ClubApi.ensureMember(s) }.getOrNull()
+                            }
+                        },
                         onBack = { authView = "login" }
                     )
                     else -> LoginScreen(
@@ -519,7 +526,15 @@ fun ClubApp(
                                             store.clear()
                                         }
                                     }
-                                    .onFailure { loginError = it.message ?: "Sign-in failed" }
+                                    .onFailure { e ->
+                                        val msg = e.message ?: "Sign-in failed"
+                                        if (msg.contains("not confirmed", ignoreCase = true)) {
+                                            registeredEmail = email
+                                            authView = "verifycode"
+                                        } else {
+                                            loginError = msg
+                                        }
+                                    }
                                 loginBusy = false
                             }
                         },

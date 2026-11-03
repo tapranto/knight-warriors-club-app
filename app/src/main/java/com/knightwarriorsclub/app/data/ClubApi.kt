@@ -218,6 +218,44 @@ object ClubApi {
         }
     }
 
+    /** Verify the 6-digit signup code from the confirmation email (OTP flow, no link). */
+    suspend fun verifySignupOtp(email: String, code: String): Result<Session> {
+        val url = ClubConfig.SUPABASE_URL + "/auth/v1/verify"
+        val payload = buildJsonObject {
+            put("email", email); put("token", code); put("type", "signup")
+        }
+        val req = baseHeaders().url(url)
+            .post(payload.toString().toRequestBody(JSON_MEDIA)).build()
+        return runCatching {
+            val (httpCode, body) = execute(req)
+            if (httpCode !in 200..299) {
+                val msg = runCatching {
+                    json.parseToJsonElement(body).jsonObject["msg"]?.jsonPrimitive?.contentOrNull
+                }.getOrNull() ?: "That code is wrong or has expired ($httpCode)"
+                throw IllegalStateException(msg)
+            }
+            parseSession(body, email)
+        }
+    }
+
+    /** Resend the signup confirmation email (it carries a fresh code). */
+    suspend fun resendSignup(email: String): Result<Unit> {
+        val url = ClubConfig.SUPABASE_URL + "/auth/v1/resend"
+        val payload = buildJsonObject { put("type", "signup"); put("email", email) }
+        val req = baseHeaders().url(url)
+            .post(payload.toString().toRequestBody(JSON_MEDIA)).build()
+        return runCatching {
+            val (httpCode, body) = execute(req)
+            if (httpCode !in 200..299) {
+                val msg = runCatching {
+                    json.parseToJsonElement(body).jsonObject["msg"]?.jsonPrimitive?.contentOrNull
+                }.getOrNull() ?: "Could not resend the code ($httpCode)"
+                throw IllegalStateException(msg)
+            }
+            Unit
+        }
+    }
+
     private suspend fun restPost(
         session: Session, path: String, payload: String, prefer: String = "return=minimal"
     ): Pair<Int, String> {
