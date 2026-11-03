@@ -349,7 +349,9 @@ class KwcMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setShortcutId(shortcutId)
             .addPerson(person)
-        runCatching {
+        // beta55: the in-app Chat heads switch decides whether this
+        // notification may float at all
+        if (com.knightwarriorsclub.app.data.AppPrefs.chatHeads(this)) runCatching {
             val bubbleData = NotificationCompat.BubbleMetadata.Builder(
                 bubblePi,
                 androidx.core.graphics.drawable.IconCompat.createWithResource(

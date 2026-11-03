@@ -22,6 +22,18 @@ object AppPrefs {
             .edit().putInt("dismissed_update", code).apply()
     }
 
+    // beta55 (Pranto): the in-app Chat heads switch, Messenger-style.
+    // It gates whether message notifications even offer a bubble;
+    // Android's own one-time allowance still lives in system settings.
+    fun chatHeads(context: Context): Boolean =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getBoolean("chat_heads", true)
+
+    fun setChatHeads(context: Context, value: Boolean) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putBoolean("chat_heads", value).apply()
+    }
+
     fun setLowData(context: Context, value: Boolean) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("low_data", value).apply()

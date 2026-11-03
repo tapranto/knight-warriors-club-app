@@ -270,13 +270,31 @@ fun SettingsScreen(
             // ANDROID setting, not an app screen — give members a
             // one-tap path to it right here.
             val ctx = LocalContext.current
+            var headsOn by remember { mutableStateOf(AppPrefs.chatHeads(ctx)) }
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("Chat heads", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "Chat heads", color = Color.White,
+                        fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = headsOn,
+                        onCheckedChange = {
+                            headsOn = it
+                            AppPrefs.setChatHeads(ctx, it)
+                        }
+                    )
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "New messages can float on your screen as chat heads " +
-                        "(bubbles) over other apps. Android controls this — " +
-                        "turn on Bubbles for Knight Warriors Club there.",
+                    "When on, new messages can float on your screen as " +
+                        "chat heads over other apps. First time only, " +
+                        "Android also needs its own Bubbles allowance — " +
+                        "the button below opens that screen.",
                     color = Color(0xFFE8EDF4), fontSize = 12.sp
                 )
                 Spacer(Modifier.height(12.dp))
