@@ -85,7 +85,12 @@ object PushStore {
 object PushNotifier {
     const val CHANNEL_ID = "kwc_calls"
     const val ALERTS_CHANNEL_ID = "kwc_alerts"
-    const val MESSAGES_CHANNEL_ID = "kwc_messages"
+    // beta54: v2 channel — the original kwc_messages channel was
+    // created WITHOUT setAllowBubbles(true), and Android never lets an
+    // app change an existing channel's bubble permission (that's why
+    // chat heads never appeared). A fresh channel id is the only way
+    // to ship the flag; the old channel stays listed but unused.
+    const val MESSAGES_CHANNEL_ID = "kwc_messages_v2"
 
     fun ensureMessagesChannel(
         context: Context, nm: NotificationManager, id: String, label: String
@@ -95,6 +100,7 @@ object PushNotifier {
         val channel = NotificationChannel(id, label, NotificationManager.IMPORTANCE_HIGH).apply {
             description = label
             enableVibration(true)
+            if (Build.VERSION.SDK_INT >= 29) setAllowBubbles(true)
         }
         nm.createNotificationChannel(channel)
     }
