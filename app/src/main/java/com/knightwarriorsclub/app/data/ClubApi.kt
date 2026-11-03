@@ -973,6 +973,20 @@ object ClubApi {
             Unit
         }
 
+    /** Captain/President changes a squad member's role (Part 18 policy). */
+    suspend fun setSquadMemberRole(
+        session: Session, squadId: Long, memberId: Long, role: String
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject { put("role", role) }
+        val (code, body) = restPatch(
+            session, "/rest/v1/squad_members",
+            mapOf("squad_id" to "eq.$squadId", "member_id" to "eq.$memberId"),
+            payload.toString()
+        )
+        if (code !in 200..299) throw IllegalStateException("Role failed ($code): $body")
+        Unit
+    }
+
     /** One ICE server entry for WebRTC (from kwc-turn or the fallback). */
     data class IceServerCfg(
         val url: String,

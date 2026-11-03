@@ -614,7 +614,8 @@ fun ClubApp(
                             session = s, me = myProfile ?: return@Column,
                             onBack = { screen = Screen.Tabs },
                             onCreate = { screen = Screen.CreateSquad },
-                            onOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.Squads) }
+                            onOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.Squads) },
+                            onAutoOpenSquad = { sq -> screen = Screen.SquadDetails(sq, Screen.Tabs) }
                         )
                         is Screen.AllSquads -> AllSquadsScreen(
                             session = s, me = myProfile ?: return@Column,

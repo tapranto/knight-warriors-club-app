@@ -11,11 +11,14 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -123,7 +126,8 @@ fun SquadsScreen(
     session: Session, me: Member,
     onBack: () -> Unit,
     onCreate: () -> Unit,
-    onOpenSquad: (Squad) -> Unit
+    onOpenSquad: (Squad) -> Unit,
+    onAutoOpenSquad: (Squad) -> Unit = onOpenSquad
 ) {
     var squads by remember { mutableStateOf<List<Squad>>(emptyList()) }
     var latest by remember { mutableStateOf<Map<Long, SquadMsg?>>(emptyMap()) }
@@ -138,6 +142,12 @@ fun SquadsScreen(
         mine.forEach { sq -> map[sq.id] = ClubApi.latestSquadMessage(session, sq.id) }
         latest = map
         loaded = true
+    }
+
+    // One squad per Warrior: with exactly one squad, "My Squads" IS
+    // that squad's profile — open it directly (Pranto, 2026-11-03).
+    LaunchedEffect(loaded) {
+        if (loaded && squads.size == 1) onAutoOpenSquad(squads[0])
     }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
@@ -664,20 +674,20 @@ private fun SquadHalfButton(
     onClick: () -> Unit
 ) {
     Box(
-        modifier.clip(RoundedCornerShape(14.dp))
+        modifier.clip(RoundedCornerShape(12.dp))
             .background(if (gold) Gold else Color.Transparent)
             .then(
                 if (gold) Modifier
-                else Modifier.border(1.dp, Color(0xFFFF9B9B), RoundedCornerShape(14.dp))
+                else Modifier.border(1.dp, Color(0xFFFF9B9B), RoundedCornerShape(12.dp))
             )
             .clickable { onClick() }
-            .padding(vertical = 12.dp),
+            .padding(vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text,
             color = if (gold) Ink else Color(0xFFFF9B9B),
-            fontWeight = FontWeight.Bold, fontSize = 12.sp
+            fontWeight = FontWeight.Bold, fontSize = 11.sp
         )
     }
 }
@@ -744,6 +754,8 @@ fun SquadDetailsScreen(
         ActivityResultContracts.PickVisualMedia()
     ) { uri -> awardLogoUri = uri }
     var removeTarget by remember { mutableStateOf<Member?>(null) }
+    var menuFor by remember { mutableStateOf<Member?>(null) }
+    var roleTarget by remember { mutableStateOf<Member?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
     var confirmDisband by remember { mutableStateOf(false) }
 
@@ -916,6 +928,40 @@ fun SquadDetailsScreen(
             }
         )
     }
+    roleTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { roleTarget = null },
+            title = { Text("Role for ${target.fullName}") },
+            text = {
+                Column {
+                    Text("Pick the role shown under their name in this squad.", fontSize = 12.sp)
+                    Spacer(Modifier.height(10.dp))
+                    listOf("Vice Captain", "Member").forEach { role ->
+                        Text(
+                            role, color = GoldLight, fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            modifier = Modifier.fillMaxWidth()
+                                .clickable {
+                                    roleTarget = null
+                                    scope.launch {
+                                        val res = ClubApi.setSquadMemberRole(
+                                            session, squad.id, target.id, role
+                                        )
+                                        if (res.isSuccess) reload()
+                                        else note = "Role didn't save — the Part 18 update may not be in yet."
+                                    }
+                                }
+                                .padding(vertical = 10.dp)
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { roleTarget = null }) { Text("Cancel") }
+            }
+        )
+    }
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false },
@@ -991,7 +1037,10 @@ fun SquadDetailsScreen(
         return
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp)) {
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(horizontal = 14.dp)
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back",
@@ -1115,8 +1164,8 @@ fun SquadDetailsScreen(
         if (!loaded) {
             Text("Loading…", color = Color(0xFFC4CEDC), fontSize = 13.sp)
         } else {
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(rows, key = { it.member.id }) { row ->
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                rows.forEach { row ->
                     GlassCard(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 38)
@@ -1129,12 +1178,36 @@ fun SquadDetailsScreen(
                                     fontSize = 11.sp
                                 )
                             }
-                            if (isCaptain && row.member.id != me.id) {
-                                Text(
-                                    "REMOVE", color = Color(0xFFFF9B9B),
-                                    fontWeight = FontWeight.Bold, fontSize = 11.sp,
-                                    modifier = Modifier.clickable { removeTarget = row.member }.padding(8.dp)
-                                )
+                            if ((isCaptain || isPresident) && row.member.id != me.id) {
+                                Box {
+                                    Icon(
+                                        Icons.Default.MoreVert,
+                                        contentDescription = "Member options",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                            .clickable { menuFor = row.member }
+                                            .padding(2.dp)
+                                    )
+                                    DropdownMenu(
+                                        expanded = menuFor?.id == row.member.id,
+                                        onDismissRequest = { menuFor = null }
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Change role") },
+                                            onClick = {
+                                                menuFor = null
+                                                roleTarget = row.member
+                                            }
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Remove") },
+                                            onClick = {
+                                                menuFor = null
+                                                removeTarget = row.member
+                                            }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
