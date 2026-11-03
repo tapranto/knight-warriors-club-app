@@ -1131,10 +1131,10 @@ private fun MorePanel(
         }
         listOf(
             "Profile" to "Your member card & honours",
+            "My Squads" to "Your teams",
             "Community" to "Meet the committee",
             "Leaderboard" to "Club rankings",
             "Tournaments" to "All club tournaments",
-            "My Squads" to "Your teams",
             "Tournament Maker" to "Build your own tournament",
             "About the Club" to "Since 2023",
             "Settings" to "Sounds, vibration, app lock"
