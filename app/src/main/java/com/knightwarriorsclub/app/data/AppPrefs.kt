@@ -11,6 +11,17 @@ object AppPrefs {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .getBoolean("low_data", false)
 
+    // beta49: which update notice the member already dismissed —
+    // the same version never nags twice.
+    fun dismissedUpdateCode(context: Context): Int =
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .getInt("dismissed_update", 0)
+
+    fun setDismissedUpdateCode(context: Context, code: Int) {
+        context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
+            .edit().putInt("dismissed_update", code).apply()
+    }
+
     fun setLowData(context: Context, value: Boolean) {
         context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
             .edit().putBoolean("low_data", value).apply()

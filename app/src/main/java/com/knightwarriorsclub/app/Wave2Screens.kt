@@ -344,6 +344,9 @@ fun PollsScreen(
                                     members.map { it.id }.filter { it != me.id },
                                     "🗳️ New club poll", question.trim(), "polls"
                                 )
+                                ClubApi.sendAnnouncePush(
+                                    session, "🗳️ New club poll", question.trim()
+                                )
                                 load()
                             } else note = "Poll creation failed."
                         }
@@ -375,6 +378,9 @@ fun PollsScreen(
                                     session,
                                     members.map { it.id }.filter { it != me.id },
                                     "🏆 MVP voting is open", title.trim(), "polls"
+                                )
+                                ClubApi.sendAnnouncePush(
+                                    session, "🏆 MVP voting is open", title.trim()
                                 )
                                 load()
                             } else note = "Ballot creation failed."

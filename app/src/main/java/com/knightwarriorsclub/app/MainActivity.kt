@@ -53,6 +53,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.knightwarriorsclub.app.data.AppPrefs
 import com.knightwarriorsclub.app.data.BackgroundStore
 import com.knightwarriorsclub.app.data.CallController
 import com.knightwarriorsclub.app.data.CallPhase
@@ -823,6 +824,27 @@ fun ClubApp(
             }
         }
 
+        // beta49: in-app update notice — the app checks the club
+        // website's data/app-version.json once per sign-in; a newer
+        // build offers a download, and "Later" silences that version.
+        var appUpdate by remember { mutableStateOf<ClubApi.AppUpdate?>(null) }
+        LaunchedEffect(session) {
+            if (session != null) {
+                val latest = ClubApi.latestAppVersion()
+                if (latest != null) {
+                    val current = runCatching {
+                        context.packageManager
+                            .getPackageInfo(context.packageName, 0).longVersionCode
+                    }.getOrDefault(0L)
+                    if (latest.versionCode.toLong() > current &&
+                        latest.versionCode != AppPrefs.dismissedUpdateCode(context)
+                    ) {
+                        appUpdate = latest
+                    }
+                }
+            }
+        }
+
         // live DM banner (beta19): drops in over any screen but calls
         val bannerNow = dmBanner
         if (session != null && bannerNow != null && callController?.uiState?.phase == CallPhase.IDLE) {
@@ -842,6 +864,41 @@ fun ClubApp(
         val cc = callController
         if (cc != null && cc.uiState.phase != CallPhase.IDLE) {
             CallOverlay(cc)
+        }
+
+        appUpdate?.let { upd ->
+            AlertDialog(
+                onDismissRequest = {
+                    AppPrefs.setDismissedUpdateCode(context, upd.versionCode)
+                    appUpdate = null
+                },
+                title = { Text("Update available") },
+                text = {
+                    Text(
+                        "Knight Warriors Club v${upd.versionName} is ready." +
+                            if (upd.notes.isNotBlank()) "\n\n${upd.notes}" else ""
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(upd.apkUrl)
+                                )
+                            )
+                        }
+                        appUpdate = null
+                    }) { Text("UPDATE") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        AppPrefs.setDismissedUpdateCode(context, upd.versionCode)
+                        appUpdate = null
+                    }) { Text("Later") }
+                }
+            )
         }
     }
 }

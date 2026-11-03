@@ -484,6 +484,41 @@ object ClubApi {
         code in 200..299
     }.getOrDefault(false)
 
+    /** Buzz EVERY member's phone with a club announcement
+     *  (send-announce-push, President-only server-side). Used when a
+     *  poll / MVP ballot starts and for Everyone-room broadcasts. */
+    suspend fun sendAnnouncePush(
+        session: Session, title: String, body: String
+    ): Boolean = runCatching {
+        val payload = buildJsonObject {
+            put("title", title.take(80))
+            put("body", body.take(240))
+        }.toString()
+        val req = baseHeaders(session.accessToken)
+            .url(ClubConfig.SUPABASE_URL + "/functions/v1/send-announce-push")
+            .post(payload.toRequestBody(JSON_MEDIA)).build()
+        val (code, _) = execute(req)
+        code in 200..299
+    }.getOrDefault(false)
+
+    /** The latest published app build, from the website's data file. */
+    data class AppUpdate(
+        val versionCode: Int, val versionName: String,
+        val apkUrl: String, val notes: String
+    )
+
+    suspend fun latestAppVersion(): AppUpdate? {
+        val root = fetchSiteJson("/data/app-version.json") ?: return null
+        val code = root["versionCode"]?.jsonPrimitive?.contentOrNull
+            ?.toIntOrNull() ?: return null
+        return AppUpdate(
+            versionCode = code,
+            versionName = root["versionName"]?.jsonPrimitive?.contentOrNull ?: "",
+            apkUrl = root["apkUrl"]?.jsonPrimitive?.contentOrNull ?: "",
+            notes = root["notes"]?.jsonPrimitive?.contentOrNull ?: ""
+        )
+    }
+
     /** Ask Supabase to ring the callee's phones via FCM (send-call-push). */
     suspend fun sendCallPush(
         session: Session, calleeMemberId: Long, callId: String, kind: String

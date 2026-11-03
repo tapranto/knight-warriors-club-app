@@ -234,6 +234,7 @@ class KwcMessagingService : FirebaseMessagingService() {
             "call" -> onCallPush(message.data)
             "missed_call" -> onMissedPush(message.data)
             "message" -> onChatMessagePush(message.data)
+            "announce" -> onAnnouncePush(message.data)
         }
     }
 
@@ -247,6 +248,32 @@ class KwcMessagingService : FirebaseMessagingService() {
             kind = if (data["kind"] == "video") "video" else "voice"
         )
         PushNotifier.showCallNotification(this, invite)
+    }
+
+    /** A club announcement from the President (poll started, MVP
+     *  ballot, broadcast): a plain high-priority notification that
+     *  opens the app. Sent by send-announce-push (beta49). */
+    private fun onAnnouncePush(data: Map<String, String>) {
+        val title = data["title"]?.takeIf { it.isNotBlank() } ?: "Knight Warriors Club"
+        val body = data["body"] ?: ""
+        val nm = getSystemService(NotificationManager::class.java) ?: return
+        PushNotifier.ensureMessagesChannel(this, nm, PushNotifier.MESSAGES_CHANNEL_ID, "Messages")
+        val intent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pi = PendingIntent.getActivity(
+            this, ("announce_" + title).hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, PushNotifier.MESSAGES_CHANNEL_ID)
+            .setSmallIcon(applicationInfo.icon)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setContentIntent(pi)
+            .setAutoCancel(true)
+        nm.notify(("announce_" + title).hashCode(), builder.build())
     }
 
     /** The caller gave up: swap the ringing notification for a
