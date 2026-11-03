@@ -182,6 +182,7 @@ fun MemberProfileScreen(
     onBack: () -> Unit,
     onMessage: (Member) -> Unit = {},
     onOpenProfile: (Member) -> Unit = {},
+    onOpenSquad: (Squad) -> Unit = {},
     onCall: (Member, String) -> Unit = { _, _ -> },
     onEdit: () -> Unit = {},
     onMeChanged: () -> Unit = {}
@@ -448,13 +449,34 @@ fun MemberProfileScreen(
                     // favourite game, game IDs and friends at a glance.
                     val pills = mutableListOf(
                         "${games.size} Games",
-                        "${squads.size} Squads",
                         "Member #${m.id}"
                     )
                     if (!m.favouriteGame.isNullOrBlank()) pills.add("★ ${m.favouriteGame}")
                     val idCount = games.count { it.second != null }
                     if (idCount > 0) pills.add("$idCount Game IDs")
                     if (friends.isNotEmpty()) pills.add("${friends.size} Friends")
+                    // beta38 (Pranto): the squad NAME lives here, not a
+                    // count \u2014 and tapping it opens the squad page.
+                    val mySquad = squads.firstOrNull()?.first
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        if (mySquad != null) {
+                            Box(
+                                Modifier.clip(RoundedCornerShape(50))
+                                    .background(Gold.copy(alpha = 0.16f))
+                                    .border(1.dp, Gold, RoundedCornerShape(50))
+                                    .clickable { onOpenSquad(mySquad) }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    "\uD83D\uDEE1\uFE0F ${mySquad.name}",
+                                    color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp
+                                )
+                            }
+                        } else {
+                            StatPill("No Squad")
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
                     pills.chunked(3).forEach { rowPills ->
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             rowPills.forEach { StatPill(it) }
@@ -464,9 +486,6 @@ fun MemberProfileScreen(
                     // badges derived from what the member actually is/has
                     val badges = mutableListOf<String>()
                     if (squads.any { it.first.captainId == m.id }) badges.add("🛡️ Squad Captain")
-                    if (playerHonours.isNotEmpty() || squadHonours.isNotEmpty()) {
-                        badges.add("🏆 Champion")
-                    }
                     if (m.id <= 10L) badges.add("⚔️ Original Warrior")
                     if (games.size >= 3) badges.add("🎮 Multi-Game Player")
                     if (badges.isNotEmpty()) {
@@ -582,38 +601,6 @@ fun MemberProfileScreen(
                             label, color = if (goldBtn) Ink else Color.White,
                             fontWeight = FontWeight.Bold, fontSize = 12.sp
                         )
-                    }
-                }
-            }
-            item {
-                Text("SQUAD", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                GlassCard(Modifier.fillMaxWidth()) {
-                    if (squads.isEmpty()) {
-                        Text("No squad yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                        if (own) {
-                            Text(
-                                "Create yours: More → My Squads → Create Squad",
-                                color = Color(0xFFC4CEDC), fontSize = 11.sp
-                            )
-                        }
-                    } else {
-                        squads.forEach { (sq, _) ->
-                            val isCaptain = sq.captainId == m.id
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                InitialAvatar(sq.name, 36)
-                                Spacer(Modifier.width(10.dp))
-                                Column {
-                                    Text(sq.name, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                    Text(
-                                        if (isCaptain) "Captain" else "Member",
-                                        color = if (isCaptain) GoldLight else Color(0xFFC4CEDC),
-                                        fontSize = 11.sp
-                                    )
-                                }
-                            }
-                            if (sq != squads.last().first) Spacer(Modifier.height(10.dp))
-                        }
                     }
                 }
             }

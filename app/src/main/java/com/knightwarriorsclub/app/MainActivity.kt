@@ -269,6 +269,11 @@ fun ClubApp(
     val context = LocalContext.current
     var lastBackAt by remember { mutableStateOf(0L) }
     BackHandler(enabled = session != null && screen is Screen.Tabs) {
+        // beta38 (Pranto): inside the hybrid News/Events tabs, Back first
+        // walks back through the web pages he opened — only when the web
+        // history is exhausted does Rule 1 below apply.
+        if (tab == Tab.News && WebPool.goBack("tab-news")) return@BackHandler
+        if (tab == Tab.Events && WebPool.goBack("tab-events")) return@BackHandler
         // Rule 1, refined by Pranto (2026-11-02): Back on any other tab
         // goes HOME first; only at Home does double-tap exit apply
         if (tab != Tab.Home) {
@@ -305,7 +310,12 @@ fun ClubApp(
     BackHandler(enabled = session != null && screen is Screen.SquadDetails) {
         screen = (screen as Screen.SquadDetails).backTo
     }
-    BackHandler(enabled = session != null && screen is Screen.WebPage) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.WebPage) {
+        // beta38: Back walks the page's own web history first (Pranto:
+        // "back goes to home, not the back page I opened")
+        val url = (screen as Screen.WebPage).url
+        if (!WebPool.goBack("page-$url")) screen = Screen.Tabs
+    }
     BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
     // envelope badge = real unread DMs, bell badge = unread notifications;
@@ -593,6 +603,9 @@ fun ClubApp(
                             onOpenProfile = { fm ->
                                 screen = Screen.Profile(fm.id, scr)
                             },
+                            onOpenSquad = { sq ->
+                                screen = Screen.SquadDetails(sq, scr)
+                            },
                             onCall = { m, k -> callController?.startCall(m, k) },
                             onEdit = { screen = Screen.ProfileEdit },
                             onMeChanged = {
@@ -665,7 +678,7 @@ fun ClubApp(
                             ClubHeader(unreadTotal, notifUnread, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             WebPageView(
                                 scr.url, Modifier.weight(1f).fillMaxWidth(),
-                                bridgeSession = s
+                                bridgeSession = s, poolKey = "page-" + scr.url
                             )
                             // Hybrid pages keep the bottom tab bar too
                             // (Pranto, 2026-11-02: it vanished on Community
@@ -701,10 +714,12 @@ fun ClubApp(
                                     // hybrid (Pranto, 2026-11-02): News + Events are
                                     // website pages shown inside the app
                                     Tab.News -> WebPageView(
-                                        "https://knightwarriorsclub.com/#news", bridgeSession = s
+                                        "https://knightwarriorsclub.com/#news",
+                                        bridgeSession = s, poolKey = "tab-news"
                                     )
                                     Tab.Events -> WebPageView(
-                                        "https://knightwarriorsclub.com/#events", bridgeSession = s
+                                        "https://knightwarriorsclub.com/#events",
+                                        bridgeSession = s, poolKey = "tab-events"
                                     )
                                     Tab.More -> MorePanel(
                                         me = myProfile,

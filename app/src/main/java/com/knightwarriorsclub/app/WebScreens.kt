@@ -53,6 +53,30 @@ private fun sessionBridgeJs(session: Session): String {
 }
 
 /**
+ * Hybrid WebView pool (beta38, Pranto 2026-11-03): WebViews used to be
+ * destroyed every time he left a tab, so Events/News reloaded from the
+ * start on every return. Now each hybrid destination owns ONE WebView
+ * that stays alive for the whole app session — page, scroll position
+ * and in-web history are exactly where he left them, and Android Back
+ * can walk the web history (see [goBack]) before leaving the page.
+ */
+object WebPool {
+    private val views = mutableMapOf<String, WebView>()
+    private val bridged = mutableSetOf<String>()
+
+    fun obtain(key: String): WebView? = views[key]
+    fun store(key: String, view: WebView) { views[key] = view }
+    fun isBridged(key: String): Boolean = key in bridged
+    fun markBridged(key: String) { bridged.add(key) }
+
+    /** Go back inside the pooled WebView; false when it has no history. */
+    fun goBack(key: String): Boolean {
+        val v = views[key] ?: return false
+        return if (v.canGoBack()) { v.goBack(); true } else false
+    }
+}
+
+/**
  * Hybrid pages (Pranto's decision, 2026-11-02): News, Events / official
  * tournaments and the Leaderboard are website content — the app shows
  * knightwarriorsclub.com inside a WebView, so whatever is published or
@@ -61,15 +85,15 @@ private fun sessionBridgeJs(session: Session): String {
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Session? = null) {
-    var progress by remember(url) { mutableStateOf(0) }
-    // the login bridge runs once per WebView: write the app's session
-    // into the website's storage, reload, and the site boots signed in
-    var bridged by remember(url) { mutableStateOf(bridgeSession == null) }
+fun WebPageView(
+    url: String, modifier: Modifier = Modifier,
+    bridgeSession: Session? = null, poolKey: String = url
+) {
+    var progress by remember(poolKey) { mutableStateOf(100) }
     Box(modifier.background(Color(0xFF0A101C))) {
         AndroidView(
             factory = { ctx ->
-                WebView(ctx).apply {
+                WebPool.obtain(poolKey) ?: WebView(ctx).apply {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.loadWithOverviewMode = true
@@ -77,8 +101,8 @@ fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Sessi
                     webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, url: String?) {
                             val bridge = bridgeSession
-                            if (bridge != null && !bridged) {
-                                bridged = true
+                            if (bridge != null && !WebPool.isBridged(poolKey)) {
+                                WebPool.markBridged(poolKey)
                                 view?.evaluateJavascript(sessionBridgeJs(bridge), null)
                                 view?.reload()
                                 return
@@ -88,7 +112,10 @@ fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Sessi
                             // tab bar — hide it and reclaim its space
                             // (Pranto, 2026-11-02). The style element lives
                             // in the page, so it survives the site's in-page
-                            // view swaps.
+                            // view swaps. beta38: the tournament section
+                            // strip (.jump-bar) sticks at top:112px on the
+                            // site (room for the site header); in the app
+                            // it must pin flush to the WebView top instead.
                             view?.evaluateJavascript(
                                 """
                                 (function () {
@@ -100,7 +127,8 @@ fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Sessi
                                   }
                                   s.textContent = '.site-head{display:none !important}' +
                                     'main{padding-top:12px !important}' +
-                                    'section{padding-top:16px !important}';
+                                    'section{padding-top:16px !important}' +
+                                    '.jump-bar{top:0 !important}';
                                 })();
                                 """.trimIndent(),
                                 null
@@ -112,11 +140,9 @@ fun WebPageView(url: String, modifier: Modifier = Modifier, bridgeSession: Sessi
                             progress = newProgress
                         }
                     }
+                    WebPool.store(poolKey, this)
                     loadUrl(url)
                 }
-            },
-            update = { view ->
-                if (view.url != url) view.loadUrl(url)
             },
             modifier = Modifier.fillMaxSize()
         )
