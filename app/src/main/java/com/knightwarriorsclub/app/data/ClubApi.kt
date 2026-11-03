@@ -17,6 +17,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.long
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -838,6 +839,86 @@ object ClubApi {
             squad
         }
     }
+
+    /** Fresh copy of one squad row (name/motto/picture straight from the DB). */
+    suspend fun squadById(session: Session, squadId: Long): Squad? {
+        val (_, body) = restGet(
+            session,
+            "/rest/v1/squads?id=eq.$squadId" +
+                "&select=id,name,game,captain_member_id,created_at,avatar_url,motto"
+        )
+        return runCatching {
+            json.parseToJsonElement(body).jsonArray.firstOrNull()
+                ?.jsonObject?.let(::toSquad)
+        }.getOrNull()
+    }
+
+    /** One squad trophy (Part 16). [squadName] is set on member-profile reads. */
+    data class SquadHonour(
+        val id: Long,
+        val squadId: Long,
+        val title: String,
+        val createdAt: String?,
+        val squadName: String? = null
+    )
+
+    private fun toHonour(o: JsonObject): SquadHonour = SquadHonour(
+        id = o["id"]?.jsonPrimitive?.longOrNull ?: 0,
+        squadId = o["squad_id"]?.jsonPrimitive?.longOrNull ?: 0,
+        title = o["title"]?.jsonPrimitive?.contentOrNull ?: "",
+        createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull,
+        squadName = (o["squads"] as? JsonObject)
+            ?.get("name")?.jsonPrimitive?.contentOrNull
+    )
+
+    /** Trophies of one squad, newest first. Fail-soft empty before Part 16. */
+    suspend fun squadHonours(session: Session, squadId: Long): List<SquadHonour> {
+        val (_, body) = restGet(
+            session,
+            "/rest/v1/squad_honours?squad_id=eq.$squadId" +
+                "&select=id,squad_id,title,created_at&order=created_at.desc"
+        )
+        return runCatching {
+            json.parseToJsonElement(body).jsonArray
+                .map { toHonour(it.jsonObject) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Every squad trophy a member shares in, across their squads. */
+    suspend fun memberSquadHonours(session: Session, memberId: Long): List<SquadHonour> {
+        val ids = squadsOf(session, memberId).map { it.first.id }
+        if (ids.isEmpty()) return emptyList()
+        val inList = ids.joinToString(",")
+        val (_, body) = restGet(
+            session,
+            "/rest/v1/squad_honours?squad_id=in.($inList)" +
+                "&select=id,squad_id,title,created_at,squads(name)&order=created_at.desc"
+        )
+        return runCatching {
+            json.parseToJsonElement(body).jsonArray
+                .map { toHonour(it.jsonObject) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** President awards a trophy to a squad (Part 16 RLS enforces it). */
+    suspend fun awardSquadHonour(
+        session: Session, squadId: Long, title: String, awardedBy: Long
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("squad_id", squadId); put("title", title); put("awarded_by", awardedBy)
+        }
+        val (code, body) = restPost(session, "/rest/v1/squad_honours", payload.toString())
+        if (code !in 200..299) throw IllegalStateException("Award failed ($code): $body")
+        Unit
+    }
+
+    /** President removes a trophy (mistake fix). */
+    suspend fun deleteSquadHonour(session: Session, honourId: Long): Result<Unit> =
+        runCatching {
+            val (code, _) = restDelete(session, "/rest/v1/squad_honours?id=eq.$honourId")
+            if (code !in 200..299) throw IllegalStateException("Remove failed ($code)")
+            Unit
+        }
 
     /**
      * Bell notification for a member who was just added to a squad

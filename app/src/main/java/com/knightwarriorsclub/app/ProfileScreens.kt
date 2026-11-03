@@ -188,6 +188,7 @@ fun MemberProfileScreen(
     var member by remember { mutableStateOf<Member?>(null) }
     var games by remember { mutableStateOf<List<Triple<String, String?, Int?>>>(emptyList()) }
     var squads by remember { mutableStateOf<List<Pair<Squad, String>>>(emptyList()) }
+    var squadHonours by remember { mutableStateOf<List<ClubApi.SquadHonour>>(emptyList()) }
     var loaded by remember { mutableStateOf(false) }
     var photoBusy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
@@ -196,6 +197,7 @@ fun MemberProfileScreen(
         member = ClubApi.memberById(session, memberId)
         games = ClubApi.memberGames(session, memberId)
         squads = ClubApi.squadsOf(session, memberId)
+        squadHonours = ClubApi.memberSquadHonours(session, memberId)
         loaded = true
     }
 
@@ -443,12 +445,29 @@ fun MemberProfileScreen(
             item {
                 Text("TOURNAMENT HONOURS", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
-                GlassCard(Modifier.fillMaxWidth()) {
-                    Text("♛  No honours yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                    Text(
-                        "Win a club tournament and it appears here.",
-                        color = Color(0xFFC4CEDC), fontSize = 11.sp
-                    )
+                if (squadHonours.isEmpty()) {
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("♛  No honours yet", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        Text(
+                            "Win a club tournament and it appears here.",
+                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                        )
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        squadHonours.forEach { h ->
+                            GlassCard(Modifier.fillMaxWidth()) {
+                                Text(
+                                    "🏆  ${h.title}", color = Color.White,
+                                    fontWeight = FontWeight.SemiBold, fontSize = 14.sp
+                                )
+                                Text(
+                                    "Won with ${h.squadName ?: "a squad"}",
+                                    color = Color(0xFFC4CEDC), fontSize = 11.sp
+                                )
+                            }
+                        }
+                    }
                 }
             }
             if (note != null) {

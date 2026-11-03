@@ -491,6 +491,31 @@ private fun squadSince(createdAt: String?): String? = createdAt?.let {
     }.getOrNull()
 }
 
+/** Half-width action button for the Squad Profile's side-by-side rows. */
+@Composable
+private fun SquadHalfButton(
+    text: String, gold: Boolean, modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    Box(
+        modifier.clip(RoundedCornerShape(14.dp))
+            .background(if (gold) Gold else Color.Transparent)
+            .then(
+                if (gold) Modifier
+                else Modifier.border(1.dp, Color(0xFFFF9B9B), RoundedCornerShape(14.dp))
+            )
+            .clickable { onClick() }
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text,
+            color = if (gold) Ink else Color(0xFFFF9B9B),
+            fontWeight = FontWeight.Bold, fontSize = 12.sp
+        )
+    }
+}
+
 @Composable
 private fun SquadChip(text: String) {
     Box(
@@ -523,6 +548,10 @@ fun SquadDetailsScreen(
     var squadMotto by remember { mutableStateOf(squad.motto ?: "") }
     var photoBusy by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
+    var honours by remember { mutableStateOf<List<ClubApi.SquadHonour>>(emptyList()) }
+    var awardDialog by remember { mutableStateOf(false) }
+    var removeHonour by remember { mutableStateOf<ClubApi.SquadHonour?>(null) }
+    val isPresident = me.role.equals("President", ignoreCase = true)
     val context = LocalContext.current
     val photoPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -549,7 +578,15 @@ fun SquadDetailsScreen(
     var confirmDisband by remember { mutableStateOf(false) }
 
     suspend fun reload() {
+        // Server truth for the header (name/motto/picture) every time —
+        // a motto saved on the website shows here too, and vice versa.
+        ClubApi.squadById(session, squad.id)?.let { fresh ->
+            squadName = fresh.name
+            squadMotto = fresh.motto ?: ""
+            avatarUrl = fresh.avatarUrl
+        }
         rows = ClubApi.squadMembers(session, squad.id)
+        honours = ClubApi.squadHonours(session, squad.id)
         loaded = true
     }
 
@@ -601,6 +638,68 @@ fun SquadDetailsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { editDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+    if (awardDialog) {
+        var draftTitle by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { awardDialog = false },
+            title = { Text("Award a trophy") },
+            text = {
+                Column {
+                    Text(
+                        "For $squadName — it appears on this profile and on every member's profile.",
+                        fontSize = 12.sp
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = draftTitle, onValueChange = { draftTitle = it },
+                        label = { Text("Trophy title") },
+                        placeholder = { Text("e.g. eFootball Squad Cup — Champions") },
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val t = draftTitle.trim()
+                    awardDialog = false
+                    if (t.isNotBlank()) {
+                        scope.launch {
+                            val res = ClubApi.awardSquadHonour(session, squad.id, t, me.id)
+                            if (res.isSuccess) {
+                                note = "Trophy awarded to $squadName."
+                                reload()
+                            } else {
+                                note = "Award didn't work — only the President can award trophies."
+                            }
+                        }
+                    }
+                }) { Text("Award") }
+            },
+            dismissButton = {
+                TextButton(onClick = { awardDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+    removeHonour?.let { h ->
+        AlertDialog(
+            onDismissRequest = { removeHonour = null },
+            title = { Text("Remove this trophy?") },
+            text = { Text("“${h.title}” will be removed from $squadName and its members' profiles.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    removeHonour = null
+                    scope.launch {
+                        val res = ClubApi.deleteSquadHonour(session, h.id)
+                        if (res.isSuccess) reload()
+                        else note = "Remove didn't work."
+                    }
+                }) { Text("Remove") }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeHonour = null }) { Text("Cancel") }
             }
         )
     }
@@ -752,13 +851,64 @@ fun SquadDetailsScreen(
             squadSince(squad.createdAt)?.let { SquadChip("Since $it") }
             SquadChip("${rows.size} members")
         }
-        if (isCaptain) {
-            Spacer(Modifier.height(10.dp))
-            GoldButton("EDIT SQUAD", enabled = true) { editDialog = true }
-        }
-        Spacer(Modifier.height(10.dp))
-        GoldButton("OPEN GROUP CHAT", enabled = true) { onOpenChat() }
         Spacer(Modifier.height(12.dp))
+        if (isCaptain) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SquadHalfButton("EDIT SQUAD", gold = true, Modifier.weight(1f)) { editDialog = true }
+                SquadHalfButton("GROUP CHAT", gold = true, Modifier.weight(1f)) { onOpenChat() }
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                SquadHalfButton("+ ADD MEMBERS", gold = true, Modifier.weight(1f)) { adding = true }
+                SquadHalfButton("DISBAND", gold = false, Modifier.weight(1f)) { confirmDisband = true }
+            }
+        } else {
+            GoldButton("OPEN GROUP CHAT", enabled = true) { onOpenChat() }
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("TROPHIES", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Spacer(Modifier.weight(1f))
+            if (isPresident) {
+                Text(
+                    "AWARD 🏆", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 11.sp,
+                    modifier = Modifier.clickable { awardDialog = true }.padding(6.dp)
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        if (honours.isEmpty()) {
+            Text(
+                "No trophies yet — win a squad tournament and the President adds it here.",
+                color = Color(0xFFC4CEDC), fontSize = 12.sp
+            )
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                honours.forEach { h ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("🏆", fontSize = 15.sp)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                h.title, color = Color.White,
+                                fontWeight = FontWeight.SemiBold, fontSize = 13.sp
+                            )
+                            squadSince(h.createdAt)?.let {
+                                Text(it, color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                            }
+                        }
+                        if (isPresident) {
+                            Text(
+                                "REMOVE", color = Color(0xFFFF9B9B),
+                                fontWeight = FontWeight.Bold, fontSize = 10.sp,
+                                modifier = Modifier.clickable { removeHonour = h }.padding(6.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
         Text(
             "MEMBERS (${rows.size})", color = GoldLight,
             fontWeight = FontWeight.Bold, fontSize = 12.sp
@@ -793,19 +943,7 @@ fun SquadDetailsScreen(
                 }
             }
         }
-        if (isCaptain) {
-            GoldButton("+ ADD MEMBERS", enabled = true) { adding = true }
-            Spacer(Modifier.height(10.dp))
-            Box(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
-                    .border(1.dp, Color(0xFFFF9B9B), RoundedCornerShape(14.dp))
-                    .clickable { confirmDisband = true }
-                    .padding(vertical = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text("DISBAND SQUAD", color = Color(0xFFFF9B9B), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            }
-        } else {
+        if (!isCaptain) {
             Box(
                 Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                     .border(1.dp, Color(0xFFFF9B9B), RoundedCornerShape(14.dp))
