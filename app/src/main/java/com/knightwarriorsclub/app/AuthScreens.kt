@@ -1,4 +1,3 @@
-@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.knightwarriorsclub.app
 
 import androidx.compose.foundation.Image
@@ -22,13 +21,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.autofill.AutofillNode
-import androidx.compose.ui.autofill.AutofillType
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.layout.boundsInWindow
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.platform.LocalAutofill
-import androidx.compose.ui.platform.LocalAutofillTree
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -62,32 +54,6 @@ fun clubFieldColors() = OutlinedTextFieldDefaults.colors(
     cursorColor = GoldLight
 )
 
-/** beta61: our own credential-kind enum for field signatures — the
- *  experimental AutofillType in a signature forced an opt-in onto
- *  EVERY file that merely calls ClubTextField/PasswordField (that's
- *  what the beta59 error flood in ProfileScreens etc. was). Only
- *  this file touches the real API now. */
-enum class ClubAutofillKind { EMAIL, PASSWORD }
-
-@Composable
-fun Modifier.clubAutofill(kind: ClubAutofillKind, onFill: (String) -> Unit): Modifier {
-    val type = when (kind) {
-        ClubAutofillKind.EMAIL -> AutofillType.EmailAddress
-        ClubAutofillKind.PASSWORD -> AutofillType.Password
-    }
-    val autofill = LocalAutofill.current
-    val node = remember(type) {
-        AutofillNode(autofillTypes = listOf(type), onFill = onFill)
-    }
-    LocalAutofillTree.current += node
-    return this
-        .onGloballyPositioned { node.boundingBox = it.boundsInWindow() }
-        .onFocusChanged { state ->
-            if (state.isFocused) autofill?.requestAutofillForNode(node)
-            else autofill?.cancelAutofillForNode(node)
-        }
-}
-
 @Composable
 fun ClubTextField(
     label: String,
@@ -98,7 +64,6 @@ fun ClubTextField(
     placeholder: String? = null,
     readOnly: Boolean = false,
     trailing: (@Composable () -> Unit)? = null,
-    autofill: ClubAutofillKind? = null,
     singleLine: Boolean = true
 ) {
     OutlinedTextField(
@@ -107,11 +72,7 @@ fun ClubTextField(
         placeholder = placeholder?.let { { Text(it, color = Color(0xFF8E9BAC)) } },
         trailingIcon = trailing,
         keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        modifier = modifier.fillMaxWidth().then(
-            if (autofill != null)
-                Modifier.clubAutofill(autofill) { v -> onChange(v) }
-            else Modifier
-        ),
+        modifier = modifier.fillMaxWidth(),
         colors = clubFieldColors()
     )
 }
@@ -122,8 +83,7 @@ fun PasswordField(
     label: String,
     value: String,
     onChange: (String) -> Unit,
-    modifier: Modifier = Modifier,
-    autofill: ClubAutofillKind = ClubAutofillKind.PASSWORD
+    modifier: Modifier = Modifier
 ) {
     var visible by remember { mutableStateOf(false) }
     OutlinedTextField(
@@ -140,8 +100,7 @@ fun PasswordField(
                 )
             }
         },
-        modifier = modifier.fillMaxWidth()
-            .clubAutofill(autofill) { v -> onChange(v) },
+        modifier = modifier.fillMaxWidth(),
         colors = clubFieldColors()
     )
 }
@@ -277,7 +236,6 @@ fun RegisterScreen(
             ClubTextField(
                 "Email *", email, { email = it },
                 keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                autofill = ClubAutofillKind.EMAIL
             )
             FieldError(errors["email"])
             Spacer(Modifier.height(10.dp))
@@ -445,7 +403,6 @@ fun ForgotPasswordScreen(onBack: () -> Unit) {
                 ClubTextField(
                     "Email", email, { email = it },
                     keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                    autofill = ClubAutofillKind.EMAIL
                 )
                 if (error != null) {
                     Spacer(Modifier.height(10.dp))

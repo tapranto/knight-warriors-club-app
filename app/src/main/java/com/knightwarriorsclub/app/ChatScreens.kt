@@ -1,4 +1,3 @@
-@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.knightwarriorsclub.app
 
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -161,7 +160,6 @@ fun LoginScreen(
             ClubTextField(
                 "Email", email, { email = it },
                 keyboardType = KeyboardType.Email, placeholder = "you@example.com",
-                autofill = ClubAutofillKind.EMAIL
             )
             Spacer(Modifier.height(10.dp))
             PasswordField("Password", password, { password = it })
