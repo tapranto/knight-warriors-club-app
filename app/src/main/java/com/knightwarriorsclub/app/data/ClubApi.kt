@@ -793,6 +793,12 @@ object ClubApi {
         session: Session, me: Long, name: String, memberIds: List<Long>
     ): Result<Squad> {
         return runCatching {
+            // One squad per Warrior (Pranto, 2026-11-03): any membership blocks.
+            if (squadsOf(session, me).isNotEmpty()) {
+                throw IllegalStateException(
+                    "You're already in a squad — one squad per Warrior. Leave it before creating your own."
+                )
+            }
             val payload = buildJsonObject {
                 put("name", name); put("captain_member_id", me)
             }

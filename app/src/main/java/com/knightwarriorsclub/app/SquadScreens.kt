@@ -154,12 +154,19 @@ fun SquadsScreen(
             }
         }
         Spacer(Modifier.height(12.dp))
-        if (owned == null) {
+        if (loaded && squads.isEmpty()) {
             GoldButton("+ CREATE SQUAD", enabled = true) { onCreate() }
-        } else {
+        } else if (owned != null) {
             GlassCard(Modifier.fillMaxWidth()) {
                 Text(
-                    "You lead “${owned!!.name}” — one squad per captain. Disband it to create a different one.",
+                    "You lead “${owned!!.name}” — one squad per Warrior. Disband it to create a different one.",
+                    color = Color(0xFFC4CEDC), fontSize = 12.sp
+                )
+            }
+        } else if (loaded) {
+            GlassCard(Modifier.fillMaxWidth()) {
+                Text(
+                    "You're in a squad — one squad per Warrior. Leave it to create your own.",
                     color = Color(0xFFC4CEDC), fontSize = 12.sp
                 )
             }
