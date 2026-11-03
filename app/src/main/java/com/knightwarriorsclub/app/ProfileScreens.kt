@@ -216,6 +216,7 @@ fun MemberProfileScreen(
     // beta42: report-a-member (Part 19 member_reports)
     var reportDialog by remember { mutableStateOf(false) }
     var reportReason by remember { mutableStateOf("") }
+    var friendsDialog by remember { mutableStateOf(false) }
     var removePlayerHonour by remember { mutableStateOf<ClubApi.MemberHonour?>(null) }
     val isPresident = me.role.equals("President", ignoreCase = true)
     var loaded by remember { mutableStateOf(false) }
@@ -277,6 +278,34 @@ fun MemberProfileScreen(
             },
             dismissButton = {
                 TextButton(onClick = { reportDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (friendsDialog) {
+        AlertDialog(
+            onDismissRequest = { friendsDialog = false },
+            title = { Text("Friends (${friends.size})") },
+            text = {
+                LazyColumn(Modifier.heightIn(max = 380.dp)) {
+                    items(friends, key = { it.id }) { f ->
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                friendsDialog = false
+                                onOpenProfile(f)
+                            }.padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            AvatarImage(url = f.avatarUrl, name = f.fullName, size = 36)
+                            Spacer(Modifier.width(10.dp))
+                            Text(f.fullName, color = Color.White, fontSize = 14.sp)
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { friendsDialog = false }) { Text("Close") }
             }
         )
     }
@@ -504,7 +533,8 @@ fun MemberProfileScreen(
                     if (!m.favouriteGame.isNullOrBlank()) pills.add("★ ${m.favouriteGame}")
                     val idCount = games.count { it.second != null }
                     if (idCount > 0) pills.add("$idCount Game IDs")
-                    if (friends.isNotEmpty()) pills.add("${friends.size} Friends")
+                    // beta43 (Pranto): the Friends pill is separate and
+                    // TAPPABLE — it opens the friend list (below).
                     // beta38 (Pranto): the squad NAME lives here, not a
                     // count \u2014 and tapping it opens the squad page.
                     val mySquad = squads.firstOrNull()?.first
@@ -548,6 +578,23 @@ fun MemberProfileScreen(
                     pills.chunked(3).forEach { rowPills ->
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             rowPills.forEach { StatPill(it) }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    if (friends.isNotEmpty()) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Box(
+                                Modifier.clip(RoundedCornerShape(50))
+                                    .background(Color.White.copy(alpha = 0.13f))
+                                    .border(1.dp, Gold, RoundedCornerShape(50))
+                                    .clickable { friendsDialog = true }
+                                    .padding(horizontal = 14.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    "${friends.size} Friends ›",
+                                    color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp
+                                )
+                            }
                         }
                         Spacer(Modifier.height(8.dp))
                     }
@@ -805,35 +852,6 @@ fun MemberProfileScreen(
                             "Drawn ${record[2]} \u00b7 Lost ${record[3]} \u2014 from official club tournaments on the website.",
                             color = Color(0xFFC4CEDC), fontSize = 11.sp
                         )
-                    }
-                }
-            }
-            item {
-                Text("FRIENDS (${friends.size})", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                if (friends.isEmpty()) {
-                    GlassCard(Modifier.fillMaxWidth()) {
-                        Text("No friends yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
-                    }
-                } else {
-                    Row(
-                        Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        friends.forEach { f ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.clickable { onOpenProfile(f) }
-                            ) {
-                                AvatarImage(url = f.avatarUrl, name = f.fullName, size = 52)
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    f.fullName.split(" ").firstOrNull() ?: f.fullName,
-                                    color = Color.White, fontSize = 10.sp,
-                                    maxLines = 1
-                                )
-                            }
-                        }
                     }
                 }
             }
