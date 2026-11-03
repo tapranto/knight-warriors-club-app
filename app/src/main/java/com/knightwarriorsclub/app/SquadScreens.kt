@@ -68,8 +68,9 @@ fun MemberPicker(
     onToggle: (Member) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    val filtered = members.filter {
-        query.isBlank() || it.fullName.contains(query, ignoreCase = true)
+    // beta43 (Pranto): same rule as Search — nobody listed until typing.
+    val filtered = if (query.isBlank()) emptyList() else members.filter {
+        it.fullName.contains(query, ignoreCase = true)
     }
     Column {
         OutlinedTextField(
@@ -85,6 +86,14 @@ fun MemberPicker(
         )
         Spacer(Modifier.height(10.dp))
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (query.isBlank()) {
+                item {
+                    Text(
+                        "Type a name to find a member.",
+                        color = Color(0xFFC4CEDC), fontSize = 13.sp
+                    )
+                }
+            }
             items(filtered, key = { it.id }) { m ->
                 val isSel = selected.contains(m.id)
                 GlassCard(Modifier.fillMaxWidth().clickable { onToggle(m) }) {

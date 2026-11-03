@@ -327,11 +327,21 @@ fun InboxScreen(
                 )
             )
             Spacer(Modifier.height(12.dp))
-            val pickList = members.filter {
+            // beta43 (Pranto): same rule as Search — nobody is listed
+            // until he starts typing.
+            val pickList = if (pickQuery.isBlank()) emptyList() else members.filter {
                 it.id !in blockedSet &&
-                        (pickQuery.isBlank() || it.fullName.contains(pickQuery, ignoreCase = true))
+                        it.fullName.contains(pickQuery, ignoreCase = true)
             }
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (pickQuery.isBlank()) {
+                    item {
+                        Text(
+                            "Type a name to find a member.",
+                            color = Color(0xFFC4CEDC), fontSize = 13.sp
+                        )
+                    }
+                }
                 items(pickList, key = { it.id }) { m ->
                     GlassCard(Modifier.fillMaxWidth().clickable {
                         picking = false
