@@ -1274,7 +1274,6 @@ private fun MorePanel(
             }
         }
         listOf(
-            "Profile" to "Your member card & honours",
             "Club Feed" to "Club posts from members",
             "Polls & MVP" to "Vote in club polls & MVP",
             "My Squads" to "Your teams",
