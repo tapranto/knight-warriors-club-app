@@ -1284,7 +1284,7 @@ private fun MorePanel(
             "Tournaments" to "All club tournaments",
             "Tournament Maker" to "Build your own tournament",
             "About the Club" to "Since 2023",
-            "Settings" to "Sounds, vibration, app lock"
+            "Settings" to "Background, alerts, data"
         ).filter { (t, _) ->
             // All Squads is the President's window on the whole club
             (t != "All Squads" && t != "President Console") ||

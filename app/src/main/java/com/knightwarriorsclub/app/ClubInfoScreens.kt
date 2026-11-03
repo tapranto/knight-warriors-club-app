@@ -224,15 +224,62 @@ fun SettingsScreen(
             }
         }
         item {
+            // beta48 (Pranto: "fix Settings"): the dead "Coming later"
+            // placeholder is gone; a real Notifications card replaces it.
+            val ctx = LocalContext.current
+            val notifOn = remember {
+                androidx.core.app.NotificationManagerCompat.from(ctx)
+                    .areNotificationsEnabled()
+            }
             GlassCard(Modifier.fillMaxWidth()) {
-                Text("Coming later", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text("Notifications", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    "Sounds & vibration controls and the app lock (fingerprint / PIN) " +
-                        "arrive in a later phase.",
-                    color = Color(0xFFC4CEDC), fontSize = 12.sp
+                    if (notifOn)
+                        "Notifications are on — messages, calls and club news can reach you."
+                    else
+                        "Notifications are OFF — you will miss messages and calls. " +
+                            "Turn them on in the system settings.",
+                    color = Color(0xFFE8EDF4), fontSize = 12.sp
                 )
+                if (!notifOn) {
+                    Spacer(Modifier.height(12.dp))
+                    Box(
+                        Modifier.clip(RoundedCornerShape(14.dp)).background(Gold)
+                            .clickable {
+                                runCatching {
+                                    ctx.startActivity(
+                                        android.content.Intent(
+                                            android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                        ).putExtra(
+                                            android.provider.Settings.EXTRA_APP_PACKAGE,
+                                            ctx.packageName
+                                        )
+                                    )
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 9.dp)
+                    ) {
+                        Text("OPEN NOTIFICATION SETTINGS", color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
             }
+        }
+        item {
+            // beta48: version footer — makes beta identification trivial
+            // when a member screenshots a problem.
+            val ctx = LocalContext.current
+            val versionName = remember {
+                runCatching {
+                    ctx.packageManager.getPackageInfo(ctx.packageName, 0).versionName
+                }.getOrNull() ?: ""
+            }
+            Text(
+                "Knight Warriors Club · Version $versionName",
+                color = Color(0xFF8FA1B8), fontSize = 11.sp,
+                modifier = Modifier.fillMaxWidth()
+                    .wrapContentWidth(androidx.compose.ui.Alignment.CenterHorizontally)
+            )
         }
         item { Spacer(Modifier.height(8.dp)) }
     }
