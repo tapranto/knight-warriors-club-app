@@ -354,6 +354,8 @@ fun ClubApp(
         }
     }
 
+    val autofillManager = androidx.compose.ui.platform.LocalAutofillManager.current
+
     // beta52: ONE logout for every entry point — the More menu and
     // the JS bridge's in-web Log out both land here. Clears the app
     // session and the WebView's bridged website session together.
@@ -584,6 +586,11 @@ fun ClubApp(
                             scope.launch {
                                 ClubApi.signIn(email, password)
                                     .onSuccess { s ->
+                                        // beta56: let the password manager
+                                        // offer to SAVE these credentials
+                                        runCatching {
+                                            autofillManager?.commit()
+                                        }
                                         session = s
                                         store.save(s)
                                         me = runCatching { ClubApi.ensureMember(s) }.getOrNull()

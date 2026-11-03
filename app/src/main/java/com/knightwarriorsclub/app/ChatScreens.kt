@@ -159,7 +159,8 @@ fun LoginScreen(
             Spacer(Modifier.height(16.dp))
             ClubTextField(
                 "Email", email, { email = it },
-                keyboardType = KeyboardType.Email, placeholder = "you@example.com"
+                keyboardType = KeyboardType.Email, placeholder = "you@example.com",
+                contentType = androidx.compose.ui.autofill.ContentType.EmailAddress
             )
             Spacer(Modifier.height(10.dp))
             PasswordField("Password", password, { password = it })
