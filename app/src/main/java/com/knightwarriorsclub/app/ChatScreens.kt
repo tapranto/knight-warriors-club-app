@@ -75,7 +75,9 @@ fun recordToDm(o: JsonObject): Dm? = runCatching {
         senderId = o["sender_member_id"]!!.jsonPrimitive.long,
         recipientId = o["recipient_member_id"]!!.jsonPrimitive.long,
         body = o["body"]?.jsonPrimitive?.contentOrNull ?: "",
-        createdAt = o["created_at"]!!.jsonPrimitive.content
+        createdAt = o["created_at"]!!.jsonPrimitive.content,
+        isRead = o["is_read"]?.jsonPrimitive?.contentOrNull == "true",
+        deliveredAt = o["delivered_at"]?.jsonPrimitive?.contentOrNull
     )
 }.getOrNull()
 
@@ -228,6 +230,8 @@ fun InboxScreen(
     }
 
     LaunchedEffect(me.id, refreshTick) {
+        // the inbox processing a message = it reached this phone
+        ClubApi.markDelivered(session, me.id)
         runCatching {
             members = ClubApi.allMembers(session).filter { it.id != me.id }
             unread = ClubApi.unreadCounts(session, me.id)
@@ -657,7 +661,10 @@ fun ChatScreen(
                 }
             }
             if (dm.senderId == partner.id) {
-                scope.launch { ClubApi.markRead(session, me.id, partner.id) }
+                scope.launch {
+                    ClubApi.markRead(session, me.id, partner.id)
+                    ClubApi.markDelivered(session, me.id, partner.id)
+                }
             }
         }
         rt?.joinBroadcast(typingChannel, { event, payload ->
@@ -676,10 +683,30 @@ fun ChatScreen(
     LaunchedEffect(partner.id) {
         runCatching { loadLatest() }
         ClubApi.markRead(session, me.id, partner.id)
+        ClubApi.markDelivered(session, me.id, partner.id)
         while (true) {
             delay(30000)
             runCatching { loadLatest() }
             ClubApi.markRead(session, me.id, partner.id)
+            ClubApi.markDelivered(session, me.id, partner.id)
+        }
+    }
+
+    // Tick states (delivered / read) for both sides of this thread
+    LaunchedEffect(partner.id) {
+        while (true) {
+            delay(6000)
+            val states = ClubApi.threadStates(session, me.id, partner.id)
+            if (states.isNotEmpty()) {
+                messages = messages.map { dm ->
+                    val st = states[dm.id]
+                    if (st == null) dm
+                    else dm.copy(
+                        isRead = st.first,
+                        deliveredAt = st.second ?: dm.deliveredAt
+                    )
+                }
+            }
         }
     }
 
@@ -814,10 +841,21 @@ fun ChatScreen(
                             .padding(horizontal = 12.dp, vertical = 8.dp)
                     ) {
                         Text(dm.body, color = Color.White, fontSize = 14.sp)
-                        Text(
-                            fmtTime(dm.createdAt), color = Color(0xFFC4CEDC), fontSize = 9.sp,
-                            modifier = Modifier.align(Alignment.End)
-                        )
+                        Row(
+                            Modifier.align(Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(fmtTime(dm.createdAt), color = Color(0xFFC4CEDC), fontSize = 9.sp)
+                            if (mine) {
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    if (dm.isRead || dm.deliveredAt != null) "✓✓" else "✓",
+                                    color = if (dm.isRead) Color(0xFFFFC94D)
+                                        else Color(0xFFC4CEDC),
+                                    fontSize = 9.sp, fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
                 }
             }

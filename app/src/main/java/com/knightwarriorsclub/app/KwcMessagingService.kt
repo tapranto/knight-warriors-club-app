@@ -281,17 +281,51 @@ class KwcMessagingService : FirebaseMessagingService() {
             this, groupKey.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        val notif = NotificationCompat.Builder(this, PushNotifier.MESSAGES_CHANNEL_ID)
+        // Chat bubbles (beta32): publish a conversation shortcut and
+        // attach bubble metadata — whether the chat actually floats is
+        // the member's phone setting (Floating notifications → Bubbles).
+        val shortcutId = if (squad) "sq_$squadId" else "dm_$fromId"
+        val personName = if (squad) squadName else fromName
+        val person = androidx.core.app.Person.Builder()
+            .setName(personName).setKey(shortcutId).build()
+        val previewText = if (squad) "$fromName: $preview" else preview
+        runCatching {
+            val shortcut = androidx.core.content.pm.ShortcutInfoCompat.Builder(this, shortcutId)
+                .setLongLived(true)
+                .setIntent(intent)
+                .setShortLabel(personName)
+                .setPerson(person)
+                .build()
+            androidx.core.content.pm.ShortcutManagerCompat.pushDynamicShortcut(this, shortcut)
+        }
+        val bubblePi = PendingIntent.getActivity(
+            this, ("bubble_$shortcutId").hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, PushNotifier.MESSAGES_CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
             .setContentTitle(if (squad) squadName else fromName)
-            .setContentText(if (squad) "$fromName: $preview" else preview)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(if (squad) "$fromName: $preview" else preview))
+            .setContentText(previewText)
+            .setStyle(
+                NotificationCompat.MessagingStyle(person)
+                    .addMessage(previewText, System.currentTimeMillis(), person)
+            )
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setGroup(groupKey)
             .setContentIntent(pi)
             .setAutoCancel(true)
-            .build()
-        nm.notify(groupKey.hashCode(), notif)
+            .setShortcutId(shortcutId)
+            .addPerson(person)
+        runCatching {
+            val bubbleData = NotificationCompat.BubbleMetadata.Builder(
+                bubblePi,
+                androidx.core.graphics.drawable.IconCompat.createWithResource(
+                    this, applicationInfo.icon
+                )
+            ).setDesiredHeight(560).build()
+            builder.setBubbleMetadata(bubbleData)
+        }
+        nm.notify(groupKey.hashCode(), builder.build())
     }
 
     private fun isForeground(): Boolean {

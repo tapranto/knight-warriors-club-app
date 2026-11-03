@@ -88,7 +88,9 @@ data class Dm(
     val senderId: Long,
     val recipientId: Long,
     val body: String,
-    val createdAt: String
+    val createdAt: String,
+    val isRead: Boolean = false,
+    val deliveredAt: String? = null
 )
 
 /**
@@ -603,7 +605,7 @@ object ClubApi {
         session: Session, me: Long, them: Long, beforeIso: String? = null, pageSize: Int = 100
     ): List<Dm> {
         val params = mutableMapOf(
-            "select" to "id,sender_member_id,recipient_member_id,body,created_at",
+            "select" to "id,sender_member_id,recipient_member_id,body,created_at,is_read",
             "or" to "(and(sender_member_id.eq.$me,recipient_member_id.eq.$them)," +
                     "and(sender_member_id.eq.$them,recipient_member_id.eq.$me))",
             "order" to "created_at.desc",
@@ -618,9 +620,60 @@ object ClubApi {
                 senderId = o["sender_member_id"]!!.jsonPrimitive.long,
                 recipientId = o["recipient_member_id"]!!.jsonPrimitive.long,
                 body = o["body"]?.jsonPrimitive?.content ?: "",
-                createdAt = o["created_at"]!!.jsonPrimitive.content
+                createdAt = o["created_at"]!!.jsonPrimitive.content,
+                isRead = o["is_read"]?.jsonPrimitive?.contentOrNull == "true"
             )
         }.reversed()
+    }
+
+    /**
+     * Tick states for one conversation: message id → (read, deliveredAt).
+     * Fail-soft: before Part 13 the delivered_at select fails and the
+     * is_read-only retry answers instead.
+     */
+    suspend fun threadStates(
+        session: Session, me: Long, them: Long
+    ): Map<Long, Pair<Boolean, String?>> = runCatching {
+        suspend fun fetch(select: String): Map<Long, Pair<Boolean, String?>> {
+            val rows = restGet(
+                session, "/rest/v1/direct_messages",
+                mapOf(
+                    "select" to select,
+                    "or" to "(and(sender_member_id.eq.$me,recipient_member_id.eq.$them)," +
+                        "and(sender_member_id.eq.$them,recipient_member_id.eq.$me))",
+                    "order" to "created_at.desc",
+                    "limit" to "100"
+                )
+            )
+            return rows.associate {
+                val o = it.jsonObject
+                (o["id"]!!.jsonPrimitive.long) to
+                    ((o["is_read"]?.jsonPrimitive?.contentOrNull == "true") to
+                        o["delivered_at"]?.jsonPrimitive?.contentOrNull)
+            }
+        }
+        runCatching { fetch("id,is_read,delivered_at") }
+            .getOrElse { fetch("id,is_read") }
+    }.getOrDefault(emptyMap())
+
+    /**
+     * Stamp delivered_at on everything addressed to me that has not got
+     * one yet (optionally only from [them]). Best-effort; silent before
+     * Part 13.
+     */
+    suspend fun markDelivered(session: Session, me: Long, them: Long? = null) {
+        runCatching {
+            val now = java.time.OffsetDateTime.now(java.time.ZoneOffset.UTC).toString()
+            val b = (ClubConfig.SUPABASE_URL + "/rest/v1/direct_messages").toHttpUrl()
+                .newBuilder()
+                .addQueryParameter("recipient_member_id", "eq.$me")
+                .addQueryParameter("delivered_at", "is.null")
+            if (them != null) b.addQueryParameter("sender_member_id", "eq.$them")
+            val payload = buildJsonObject { put("delivered_at", now) }
+            val req = baseHeaders(session.accessToken).url(b.build())
+                .patch(payload.toString().toRequestBody(JSON_MEDIA)).build()
+            execute(req)
+        }
     }
 
     /** Send a DM. The caller writes the row, exactly like the website does. */
