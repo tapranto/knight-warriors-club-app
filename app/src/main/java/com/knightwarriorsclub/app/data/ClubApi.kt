@@ -966,7 +966,9 @@ object ClubApi {
     /** President removes an individual trophy. */
     suspend fun deleteMemberHonour(session: Session, honourId: Long): Result<Unit> =
         runCatching {
-            val (code, _) = restDelete(session, "/rest/v1/member_honours?id=eq.$honourId")
+            val (code, _) = restDelete(
+                session, "/rest/v1/member_honours", mapOf("id" to "eq.$honourId")
+            )
             if (code !in 200..299) throw IllegalStateException("Remove failed ($code)")
             Unit
         }
@@ -1106,7 +1108,9 @@ object ClubApi {
     /** President removes a trophy (mistake fix). */
     suspend fun deleteSquadHonour(session: Session, honourId: Long): Result<Unit> =
         runCatching {
-            val (code, _) = restDelete(session, "/rest/v1/squad_honours?id=eq.$honourId")
+            val (code, _) = restDelete(
+                session, "/rest/v1/squad_honours", mapOf("id" to "eq.$honourId")
+            )
             if (code !in 200..299) throw IllegalStateException("Remove failed ($code)")
             Unit
         }
