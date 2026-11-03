@@ -266,6 +266,52 @@ fun SettingsScreen(
             }
         }
         item {
+            // beta53 (Pranto: "where's the chat head?"): bubbles are an
+            // ANDROID setting, not an app screen — give members a
+            // one-tap path to it right here.
+            val ctx = LocalContext.current
+            GlassCard(Modifier.fillMaxWidth()) {
+                Text("Chat heads", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "New messages can float on your screen as chat heads " +
+                        "(bubbles) over other apps. Android controls this — " +
+                        "turn on Bubbles for Knight Warriors Club there.",
+                    color = Color(0xFFE8EDF4), fontSize = 12.sp
+                )
+                Spacer(Modifier.height(12.dp))
+                Box(
+                    Modifier.clip(RoundedCornerShape(14.dp)).background(Gold)
+                        .clickable {
+                            runCatching {
+                                ctx.startActivity(
+                                    android.content.Intent(
+                                        "android.settings.APP_NOTIFICATION_BUBBLE_SETTINGS"
+                                    ).putExtra(
+                                        "android.provider.extra.APP_PACKAGE",
+                                        ctx.packageName
+                                    )
+                                )
+                            }.onFailure {
+                                runCatching {
+                                    ctx.startActivity(
+                                        android.content.Intent(
+                                            android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS
+                                        ).putExtra(
+                                            android.provider.Settings.EXTRA_APP_PACKAGE,
+                                            ctx.packageName
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                ) {
+                    Text("OPEN CHAT HEAD SETTINGS", color = Ink, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+            }
+        }
+        item {
             // beta48: version footer — makes beta identification trivial
             // when a member screenshots a problem.
             val ctx = LocalContext.current
