@@ -95,6 +95,7 @@ private sealed interface Screen {
     data object Tabs : Screen
     data object Inbox : Screen
     data object Everyone : Screen
+    data object Notifications : Screen
     data class Chat(val partner: Member) : Screen
     // v0.4.0 routes
     data class Profile(val memberId: Long, val backTo: Screen) : Screen
@@ -246,6 +247,7 @@ fun ClubApp(
     var loginBusy by remember { mutableStateOf(false) }
     var loginError by remember { mutableStateOf<String?>(null) }
     var unreadTotal by remember { mutableStateOf(0) }
+    var notifUnread by remember { mutableStateOf(0) }
     var authView by remember { mutableStateOf("login") }
     var registeredEmail by remember { mutableStateOf("") }
 
@@ -282,6 +284,7 @@ fun ClubApp(
         }
     }
     BackHandler(enabled = session != null && screen is Screen.Inbox) { screen = Screen.Tabs }
+    BackHandler(enabled = session != null && screen is Screen.Notifications) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.Everyone) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.Chat) { screen = Screen.Inbox }
     BackHandler(enabled = session != null && screen is Screen.ChatDetails) {
@@ -305,13 +308,15 @@ fun ClubApp(
     BackHandler(enabled = session != null && screen is Screen.WebPage) { screen = Screen.Tabs }
     BackHandler(enabled = session == null && authView != "login") { authView = "login" }
 
-    // envelope badge = real unread DMs, refreshed when back on the tabs
+    // envelope badge = real unread DMs, bell badge = unread notifications;
+    // both refreshed when back on the tabs
     LaunchedEffect(session, me, screen) {
         val s = session; val m = me
         if (s != null && m != null && screen is Screen.Tabs) {
             unreadTotal = runCatching {
                 ClubApi.unreadCounts(s, m.id).values.sum()
             }.getOrDefault(0)
+            notifUnread = ClubApi.unreadNotificationCount(s, m.id)
         }
     }
 
@@ -571,11 +576,23 @@ fun ClubApp(
                             session = s,
                             onBack = { screen = Screen.Inbox }
                         )
+                        is Screen.Notifications -> NotificationsScreen(
+                            session = s, me = myProfile ?: return@Column,
+                            onBack = { screen = Screen.Tabs },
+                            onOpenEveryone = { screen = Screen.Everyone },
+                            onOpenInbox = { screen = Screen.Inbox },
+                            onOpenProfile = { m ->
+                                screen = Screen.Profile(m.id, Screen.Notifications)
+                            }
+                        )
                         is Screen.Profile -> MemberProfileScreen(
                             session = s, me = myProfile ?: return@Column,
                             memberId = scr.memberId,
                             onBack = { screen = scr.backTo },
                             onMessage = { m -> screen = Screen.Chat(m) },
+                            onOpenProfile = { fm ->
+                                screen = Screen.Profile(fm.id, scr)
+                            },
                             onCall = { m, k -> callController?.startCall(m, k) },
                             onEdit = { screen = Screen.ProfileEdit },
                             onMeChanged = {
@@ -645,7 +662,7 @@ fun ClubApp(
                             // hybrid pages keep the APP header (logo, club
                             // name, bell, envelope) — Pranto, 2026-11-02;
                             // the Android Back button returns to the tabs
-                            ClubHeader(unreadTotal) { screen = Screen.Inbox }
+                            ClubHeader(unreadTotal, notifUnread, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             WebPageView(
                                 scr.url, Modifier.weight(1f).fillMaxWidth(),
                                 bridgeSession = s
@@ -660,7 +677,7 @@ fun ClubApp(
                             }
                         }
                         is Screen.Tabs -> {
-                            ClubHeader(unreadTotal) { screen = Screen.Inbox }
+                            ClubHeader(unreadTotal, notifUnread, onBellClick = { screen = Screen.Notifications }) { screen = Screen.Inbox }
                             Box(Modifier.weight(1f)) {
                                 when (tab) {
                                     Tab.Home -> HomeScreen(
@@ -812,7 +829,11 @@ private fun DmBanner(
 }
 
 @Composable
-private fun ClubHeader(unreadTotal: Int, onEnvelopeClick: () -> Unit) {
+private fun ClubHeader(
+    unreadTotal: Int, notifUnread: Int = 0,
+    onBellClick: () -> Unit = {},
+    onEnvelopeClick: () -> Unit
+) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -830,11 +851,27 @@ private fun ClubHeader(unreadTotal: Int, onEnvelopeClick: () -> Unit) {
             Text("KNIGHT WARRIORS CLUB", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Text("EST. 2023 • ESPORTS CLUB", color = Color(0xFFC4CEDC), fontSize = 9.sp)
         }
-        // bell LEFT, envelope RIGHT — Pranto's header order
-        Icon(
-            Icons.Filled.Notifications, contentDescription = "Notifications",
-            tint = Color.White, modifier = Modifier.size(26.dp)
-        )
+        // bell LEFT, envelope RIGHT — Pranto's header order.
+        // beta37: the bell now opens the Notifications page and carries
+        // its own unread badge (it was decorative before — Pranto).
+        Box(Modifier.clickable { onBellClick() }) {
+            Icon(
+                Icons.Filled.Notifications, contentDescription = "Notifications",
+                tint = Color.White, modifier = Modifier.size(26.dp)
+            )
+            if (notifUnread > 0) {
+                Box(
+                    Modifier.size(16.dp).align(Alignment.TopEnd).offset(x = 6.dp, y = (-4).dp)
+                        .clip(CircleShape).background(Color(0xFFE23B3B)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (notifUnread > 9) "9+" else "$notifUnread",
+                        color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
         Spacer(Modifier.width(14.dp))
         Box(Modifier.clickable { onEnvelopeClick() }) {
             Icon(

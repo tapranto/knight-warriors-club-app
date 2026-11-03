@@ -1383,4 +1383,218 @@ object ClubApi {
             Unit
         }
     }
+
+    // ---------- notifications page (beta37, Pranto 2026-11-03) ----------
+    // Same rows the website's bell/Inbox reads: broadcasts fan out into
+    // one notification per member, squad RPCs add their own, and pending
+    // friend requests are listed separately from the friendships table
+    // (exactly like the website's Inbox page).
+
+    data class ClubNotification(
+        val id: Long,
+        val type: String,
+        val title: String,
+        val body: String?,
+        val link: String?,
+        val isRead: Boolean,
+        val createdAt: String
+    )
+
+    suspend fun notifications(session: Session, me: Long): List<ClubNotification> =
+        runCatching {
+            val rows = restGet(
+                session, "/rest/v1/notifications",
+                mapOf(
+                    "select" to "id,type,title,body,link,is_read,created_at",
+                    "member_id" to "eq.$me",
+                    "order" to "created_at.desc",
+                    "limit" to "40"
+                )
+            )
+            rows.map {
+                val o = it.jsonObject
+                ClubNotification(
+                    id = o["id"]!!.jsonPrimitive.long,
+                    type = o["type"]?.jsonPrimitive?.contentOrNull ?: "info",
+                    title = o["title"]?.jsonPrimitive?.contentOrNull ?: "Notification",
+                    body = o["body"]?.jsonPrimitive?.contentOrNull,
+                    link = o["link"]?.jsonPrimitive?.contentOrNull,
+                    isRead = o["is_read"]?.jsonPrimitive?.contentOrNull == "true",
+                    createdAt = o["created_at"]?.jsonPrimitive?.contentOrNull ?: ""
+                )
+            }
+        }.getOrDefault(emptyList())
+
+    suspend fun unreadNotificationCount(session: Session, me: Long): Int =
+        runCatching {
+            restGet(
+                session, "/rest/v1/notifications",
+                mapOf(
+                    "select" to "id",
+                    "member_id" to "eq.$me",
+                    "is_read" to "eq.false"
+                )
+            ).size
+        }.getOrDefault(0)
+
+    /** Opening the Notifications page marks them read (website parity). */
+    suspend fun markNotificationsRead(session: Session, me: Long) {
+        runCatching {
+            val payload = buildJsonObject { put("is_read", true) }
+            restPatch(
+                session, "/rest/v1/notifications",
+                mapOf("member_id" to "eq.$me", "is_read" to "eq.false"),
+                payload.toString()
+            )
+        }
+    }
+
+    // ---------- friendships (beta37): profile friends + requests ----------
+
+    data class Friendship(
+        val requesterId: Long,
+        val addresseeId: Long,
+        val status: String
+    )
+
+    private fun toFriendship(o: JsonObject) = Friendship(
+        requesterId = o["requester_id"]!!.jsonPrimitive.long,
+        addresseeId = o["addressee_id"]!!.jsonPrimitive.long,
+        status = o["status"]?.jsonPrimitive?.contentOrNull ?: "pending"
+    )
+
+    /** Every friendship row touching [memberId] (either direction). */
+    suspend fun friendshipsOf(session: Session, memberId: Long): List<Friendship> =
+        runCatching {
+            val rows = restGet(
+                session, "/rest/v1/friendships",
+                mapOf(
+                    "select" to "requester_id,addressee_id,status",
+                    "or" to "(requester_id.eq.$memberId,addressee_id.eq.$memberId)"
+                )
+            )
+            rows.map { toFriendship(it.jsonObject) }
+        }.getOrDefault(emptyList())
+
+    /** Accepted friends of a member, as full member rows (A–Z). */
+    suspend fun friendsOf(session: Session, memberId: Long): List<Member> =
+        runCatching {
+            val ids = friendshipsOf(session, memberId)
+                .filter { it.status == "accepted" }
+                .map { if (it.requesterId == memberId) it.addresseeId else it.requesterId }
+                .distinct()
+            if (ids.isEmpty()) return@runCatching emptyList()
+            val rows = restGet(
+                session, "/rest/v1/members",
+                mapOf(
+                    "select" to MEMBER_SELECT,
+                    "id" to "in.(${ids.joinToString(",")})",
+                    "order" to "full_name.asc"
+                )
+            )
+            rows.map { toMember(it.jsonObject) }
+        }.getOrDefault(emptyList())
+
+    /** Members with a pending request TO me (Notifications page). */
+    suspend fun pendingFriendRequests(session: Session, me: Long): List<Member> =
+        runCatching {
+            val rows = restGet(
+                session, "/rest/v1/friendships",
+                mapOf(
+                    "select" to "requester_id",
+                    "addressee_id" to "eq.$me",
+                    "status" to "eq.pending"
+                )
+            )
+            val ids = rows.map { it.jsonObject["requester_id"]!!.jsonPrimitive.long }
+            if (ids.isEmpty()) return@runCatching emptyList()
+            val mrows = restGet(
+                session, "/rest/v1/members",
+                mapOf(
+                    "select" to MEMBER_SELECT,
+                    "id" to "in.(${ids.joinToString(",")})",
+                    "order" to "full_name.asc"
+                )
+            )
+            mrows.map { toMember(it.jsonObject) }
+        }.getOrDefault(emptyList())
+
+    /** Send a friend request; a previously declined pair is cleared
+     *  first, mirroring the website's flow. */
+    suspend fun sendFriendRequest(session: Session, me: Long, them: Long): Result<Unit> =
+        runCatching {
+            val payload = buildJsonObject {
+                put("requester_id", me); put("addressee_id", them); put("status", "pending")
+            }
+            var (code, _) = restPost(session, "/rest/v1/friendships", payload.toString())
+            if (code !in 200..299) {
+                restDelete(
+                    session, "/rest/v1/friendships",
+                    mapOf(
+                        "or" to "(and(requester_id.eq.$me,addressee_id.eq.$them)," +
+                            "and(requester_id.eq.$them,addressee_id.eq.$me))"
+                    )
+                )
+                val retry = restPost(session, "/rest/v1/friendships", payload.toString())
+                code = retry.first
+            }
+            check(code in 200..299) { "friend request failed (HTTP $code)" }
+        }
+
+    /** Accept or decline a request sent TO me. */
+    suspend fun respondFriendRequest(
+        session: Session, me: Long, requesterId: Long, accept: Boolean
+    ): Result<Unit> = runCatching {
+        val payload = buildJsonObject {
+            put("status", if (accept) "accepted" else "declined")
+        }
+        val (code, _) = restPatch(
+            session, "/rest/v1/friendships",
+            mapOf("requester_id" to "eq.$requesterId", "addressee_id" to "eq.$me"),
+            payload.toString()
+        )
+        check(code in 200..299) { "friend response failed (HTTP $code)" }
+    }
+
+    /** Remove a friendship (either direction), website parity. */
+    suspend fun removeFriendship(session: Session, me: Long, them: Long): Result<Unit> =
+        runCatching {
+            val (code, _) = restDelete(
+                session, "/rest/v1/friendships",
+                mapOf(
+                    "or" to "(and(requester_id.eq.$me,addressee_id.eq.$them)," +
+                        "and(requester_id.eq.$them,addressee_id.eq.$me))"
+                )
+            )
+            check(code in 200..299) { "unfriend failed (HTTP $code)" }
+        }
+
+    // ---------- official match record (beta37): from the website's
+    // data/matches.json, matched by full name like the site's own
+    // leaderboard. Returns (played, won, drawn, lost). ----------
+
+    suspend fun matchRecord(fullName: String): List<Int> = runCatching {
+        val root = fetchSiteJson("/data/matches.json") ?: return@runCatching listOf(0, 0, 0, 0)
+        val arr = root["matches"]?.jsonArray ?: return@runCatching listOf(0, 0, 0, 0)
+        var p = 0; var w = 0; var d = 0; var l = 0
+        arr.forEach {
+            val o = it.jsonObject
+            if (o["played"]?.jsonPrimitive?.contentOrNull != "true") return@forEach
+            val p1 = o["player1"]?.jsonPrimitive?.contentOrNull
+            val p2 = o["player2"]?.jsonPrimitive?.contentOrNull
+            val g1 = o["goals1"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return@forEach
+            val g2 = o["goals2"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return@forEach
+            val mine: Int; val theirs: Int
+            if (p1.equals(fullName, ignoreCase = true)) { mine = g1; theirs = g2 }
+            else if (p2.equals(fullName, ignoreCase = true)) { mine = g2; theirs = g1 }
+            else return@forEach
+            p++
+            when {
+                mine > theirs -> w++
+                mine == theirs -> d++
+                else -> l++
+            }
+        }
+        listOf(p, w, d, l)
+    }.getOrDefault(listOf(0, 0, 0, 0))
 }

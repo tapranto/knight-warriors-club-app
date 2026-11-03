@@ -7,7 +7,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -179,6 +181,7 @@ fun MemberProfileScreen(
     session: Session, me: Member, memberId: Long,
     onBack: () -> Unit,
     onMessage: (Member) -> Unit = {},
+    onOpenProfile: (Member) -> Unit = {},
     onCall: (Member, String) -> Unit = { _, _ -> },
     onEdit: () -> Unit = {},
     onMeChanged: () -> Unit = {}
@@ -190,6 +193,12 @@ fun MemberProfileScreen(
     var squads by remember { mutableStateOf<List<Pair<Squad, String>>>(emptyList()) }
     var squadHonours by remember { mutableStateOf<List<ClubApi.SquadHonour>>(emptyList()) }
     var playerHonours by remember { mutableStateOf<List<ClubApi.MemberHonour>>(emptyList()) }
+    // beta37 profile fill-out (Pranto): friends, my friendship state with
+    // this member, and the official match record from the website data.
+    var friends by remember { mutableStateOf<List<Member>>(emptyList()) }
+    var friendRel by remember { mutableStateOf<ClubApi.Friendship?>(null) }
+    var friendBusy by remember { mutableStateOf(false) }
+    var record by remember { mutableStateOf<List<Int>>(listOf(0, 0, 0, 0)) }
     var awardPlayerDialog by remember { mutableStateOf(false) }
     var removePlayerHonour by remember { mutableStateOf<ClubApi.MemberHonour?>(null) }
     val isPresident = me.role.equals("President", ignoreCase = true)
@@ -198,11 +207,20 @@ fun MemberProfileScreen(
     var note by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(memberId) {
-        member = ClubApi.memberById(session, memberId)
+        val mm = ClubApi.memberById(session, memberId)
+        member = mm
         games = ClubApi.memberGames(session, memberId)
         squads = ClubApi.squadsOf(session, memberId)
         squadHonours = ClubApi.memberSquadHonours(session, memberId)
         playerHonours = ClubApi.memberHonours(session, memberId)
+        friends = ClubApi.friendsOf(session, memberId)
+        if (mm != null) record = ClubApi.matchRecord(mm.fullName)
+        if (memberId != me.id) {
+            friendRel = ClubApi.friendshipsOf(session, me.id).firstOrNull {
+                (it.requesterId == me.id && it.addresseeId == memberId) ||
+                    (it.requesterId == memberId && it.addresseeId == me.id)
+            }
+        }
         loaded = true
     }
 
@@ -426,13 +444,46 @@ fun MemberProfileScreen(
                         Text(m.bio, color = Color(0xFFF2F5F9), fontSize = 13.sp)
                     }
                     Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        StatPill("${games.size} Games")
-                        StatPill("${squads.size} Squads")
-                        if (own) {
-                            StatPill("${games.count { it.second != null }} Game IDs")
-                        } else if (!m.favouriteGame.isNullOrBlank()) {
-                            StatPill("★ ${m.favouriteGame}")
+                    // beta37: fuller stat set — games, squads, member number,
+                    // favourite game, game IDs and friends at a glance.
+                    val pills = mutableListOf(
+                        "${games.size} Games",
+                        "${squads.size} Squads",
+                        "Member #${m.id}"
+                    )
+                    if (!m.favouriteGame.isNullOrBlank()) pills.add("★ ${m.favouriteGame}")
+                    val idCount = games.count { it.second != null }
+                    if (idCount > 0) pills.add("$idCount Game IDs")
+                    if (friends.isNotEmpty()) pills.add("${friends.size} Friends")
+                    pills.chunked(3).forEach { rowPills ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            rowPills.forEach { StatPill(it) }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
+                    // badges derived from what the member actually is/has
+                    val badges = mutableListOf<String>()
+                    if (squads.any { it.first.captainId == m.id }) badges.add("🛡️ Squad Captain")
+                    if (playerHonours.isNotEmpty() || squadHonours.isNotEmpty()) {
+                        badges.add("🏆 Champion")
+                    }
+                    if (m.id <= 10L) badges.add("⚔️ Original Warrior")
+                    if (games.size >= 3) badges.add("🎮 Multi-Game Player")
+                    if (badges.isNotEmpty()) {
+                        Row(
+                            Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            badges.forEach { b ->
+                                Box(
+                                    Modifier.clip(RoundedCornerShape(50))
+                                        .background(Gold.copy(alpha = 0.16f))
+                                        .border(1.dp, Gold, RoundedCornerShape(50))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(b, color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                                }
+                            }
                         }
                     }
                 }
@@ -473,6 +524,67 @@ fun MemberProfileScreen(
                     }
                 }
             }
+            if (!own) {
+                item {
+                    // beta37: friendship action for other members' profiles
+                    val rel = friendRel
+                    val sentByMe = rel != null && rel.status == "pending" && rel.requesterId == me.id
+                    val label = when {
+                        rel == null || rel.status == "declined" -> "＋ ADD FRIEND"
+                        rel.status == "accepted" -> "✓ FRIENDS — TAP TO REMOVE"
+                        sentByMe -> "REQUEST SENT"
+                        else -> "ACCEPT FRIEND REQUEST"
+                    }
+                    val goldBtn = label == "＋ ADD FRIEND" || label == "ACCEPT FRIEND REQUEST"
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(if (goldBtn) Gold else Color.White.copy(alpha = 0.12f))
+                            .then(
+                                if (goldBtn) Modifier
+                                else Modifier.border(1.dp, GlassRim, RoundedCornerShape(14.dp))
+                            )
+                            .clickable(enabled = !friendBusy && !sentByMe) {
+                                val r = friendRel
+                                friendBusy = true
+                                scope.launch {
+                                    when {
+                                        r == null || r.status == "declined" -> {
+                                            val res = ClubApi.sendFriendRequest(session, me.id, m.id)
+                                            if (res.isSuccess) {
+                                                friendRel = ClubApi.Friendship(me.id, m.id, "pending")
+                                                note = "Friend request sent to ${m.fullName}."
+                                            } else note = "Request failed — try again."
+                                        }
+                                        r.status == "accepted" -> {
+                                            val res = ClubApi.removeFriendship(session, me.id, m.id)
+                                            if (res.isSuccess) {
+                                                friendRel = null
+                                                friends = ClubApi.friendsOf(session, memberId)
+                                                note = "Friend removed."
+                                            } else note = "That didn't work — try again."
+                                        }
+                                        r.status == "pending" && r.addresseeId == me.id -> {
+                                            val res = ClubApi.respondFriendRequest(session, me.id, m.id, true)
+                                            if (res.isSuccess) {
+                                                friendRel = r.copy(status = "accepted")
+                                                friends = ClubApi.friendsOf(session, memberId)
+                                                note = "You and ${m.fullName} are now friends."
+                                            } else note = "That didn't work — try again."
+                                        }
+                                    }
+                                    friendBusy = false
+                                }
+                            }
+                            .padding(vertical = 11.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            label, color = if (goldBtn) Ink else Color.White,
+                            fontWeight = FontWeight.Bold, fontSize = 12.sp
+                        )
+                    }
+                }
+            }
             item {
                 Text("SQUAD", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 Spacer(Modifier.height(6.dp))
@@ -501,43 +613,6 @@ fun MemberProfileScreen(
                                 }
                             }
                             if (sq != squads.last().first) Spacer(Modifier.height(10.dp))
-                        }
-                    }
-                }
-            }
-            item {
-                Text("GAMES", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                Spacer(Modifier.height(6.dp))
-                if (games.isEmpty()) {
-                    GlassCard(Modifier.fillMaxWidth()) {
-                        Text("No games added yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
-                    }
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        games.chunked(2).forEach { pair ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                pair.forEach { (game, uid, strength) ->
-                                    GlassCard(Modifier.weight(1f)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Text(gameSymbol(game), color = GoldLight, fontSize = 17.sp)
-                                            Spacer(Modifier.width(8.dp))
-                                            Column {
-                                                Text(game, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                                                if (own) {
-                                                    val sub = listOfNotNull(
-                                                        uid?.let { "UID $it" },
-                                                        strength?.let { "⚔ $it" }
-                                                    ).joinToString(" • ")
-                                                    if (sub.isNotBlank()) {
-                                                        Text(sub, color = Color(0xFFC4CEDC), fontSize = 10.sp)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (pair.size == 1) Spacer(Modifier.weight(1f))
-                            }
                         }
                     }
                 }
@@ -611,6 +686,93 @@ fun MemberProfileScreen(
                                         )
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Text("GAMES", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                if (games.isEmpty()) {
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("No games added yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        games.chunked(2).forEach { pair ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                pair.forEach { (game, uid, strength) ->
+                                    GlassCard(Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(gameSymbol(game), color = GoldLight, fontSize = 17.sp)
+                                            Spacer(Modifier.width(8.dp))
+                                            Column {
+                                                Text(game, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                                                // beta37: UID + team strength on the
+                                                // profile itself (Pranto's fill-out list)
+                                                val sub = listOfNotNull(
+                                                    uid?.let { "UID $it" },
+                                                    strength?.let { "⚔ $it" }
+                                                ).joinToString(" • ")
+                                                if (sub.isNotBlank()) {
+                                                    Text(sub, color = Color(0xFFC4CEDC), fontSize = 10.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (pair.size == 1) Spacer(Modifier.weight(1f))
+                            }
+                        }
+                    }
+                }
+            }
+            item {
+                Text("MATCH RECORD", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                GlassCard(Modifier.fillMaxWidth()) {
+                    if (record[0] == 0) {
+                        Text("No official tournament matches yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+                    } else {
+                        val winPct = record[1] * 100 / record[0]
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            StatPill("Played ${record[0]}")
+                            StatPill("Won ${record[1]}")
+                            StatPill("Win $winPct%")
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "Drawn ${record[2]} \u00b7 Lost ${record[3]} \u2014 from official club tournaments on the website.",
+                            color = Color(0xFFC4CEDC), fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+            item {
+                Text("FRIENDS (${friends.size})", color = GoldLight, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(6.dp))
+                if (friends.isEmpty()) {
+                    GlassCard(Modifier.fillMaxWidth()) {
+                        Text("No friends yet.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+                    }
+                } else {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        friends.forEach { f ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.clickable { onOpenProfile(f) }
+                            ) {
+                                AvatarImage(url = f.avatarUrl, name = f.fullName, size = 52)
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    f.fullName.split(" ").firstOrNull() ?: f.fullName,
+                                    color = Color.White, fontSize = 10.sp,
+                                    maxLines = 1
+                                )
                             }
                         }
                     }

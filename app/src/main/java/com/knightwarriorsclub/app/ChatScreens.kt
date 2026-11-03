@@ -42,6 +42,7 @@ import com.knightwarriorsclub.app.data.Broadcast
 import com.knightwarriorsclub.app.data.ChatPrefs
 import com.knightwarriorsclub.app.data.ClubApi
 import com.knightwarriorsclub.app.data.Dm
+import com.knightwarriorsclub.app.data.InboxCache
 import com.knightwarriorsclub.app.data.Member
 import com.knightwarriorsclub.app.data.RealtimeClient
 import com.knightwarriorsclub.app.data.Session
@@ -221,6 +222,25 @@ fun InboxScreen(
     var refreshTick by remember { mutableStateOf(0) }
     var picking by remember { mutableStateOf(false) }
 
+    // beta37 (Pranto): Messenger-style — paint the last-known inbox from
+    // the phone cache instantly, then let the fetch below refresh it.
+    LaunchedEffect(me.id) {
+        if (members.isEmpty()) {
+            InboxCache.loadInbox(context, me.id)?.let { snap ->
+                members = snap.members
+                latest = snap.latest
+                unread = snap.unread
+                blockedSet = snap.blocked
+                mySquads = snap.squads
+                squadLatest = snap.squadLatest.mapValues { (sid, v) ->
+                    if (v.second.isBlank()) null
+                    else SquadMsg(0, sid, 0, v.first ?: "", v.second)
+                }
+                loaded = true
+            }
+        }
+    }
+
     // live refresh: any new DM anywhere bumps the tick and reloads the list
     DisposableEffect(me.id) {
         val rt = realtime
@@ -243,6 +263,9 @@ fun InboxScreen(
             val map = mutableMapOf<Long, SquadMsg?>()
             squads.forEach { sq -> map[sq.id] = ClubApi.latestSquadMessage(session, sq.id) }
             squadLatest = map
+            InboxCache.saveInbox(
+                context, me.id, members, latest, unread, blockedSet, mySquads, squadLatest
+            )
         }
         loaded = true
     }
@@ -624,6 +647,24 @@ fun ChatScreen(
     var nowTick by remember { mutableStateOf(System.currentTimeMillis()) }
     var lastTypingSent by remember { mutableStateOf(0L) }
     val listState = rememberLazyListState()
+
+    // beta37: open with the phone-cached thread instantly (Messenger-style);
+    // loadLatest() below then merges anything newer from the server, and
+    // every change is written back to the cache for the next open.
+    LaunchedEffect(partner.id) {
+        if (messages.isEmpty()) {
+            val cached = InboxCache.loadThread(context, me.id, partner.id)
+            if (cached.isNotEmpty()) {
+                messages = cached
+                runCatching { listState.scrollToItem(cached.size - 1) }
+            }
+        }
+    }
+    LaunchedEffect(messages) {
+        if (messages.isNotEmpty()) {
+            InboxCache.saveThread(context, me.id, partner.id, messages)
+        }
+    }
 
     val insertsChannel = "app-chat-${me.id}-${partner.id}"
     val typingChannel = "kwc-chat-${minOf(me.id, partner.id)}-${maxOf(me.id, partner.id)}"

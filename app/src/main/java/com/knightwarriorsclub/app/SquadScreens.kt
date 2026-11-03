@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -1166,16 +1167,30 @@ fun SquadDetailsScreen(
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 rows.forEach { row ->
-                    GlassCard(Modifier.fillMaxWidth()) {
+                    Box(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                            .background(GlassFill)
+                            .border(1.dp, GlassRim, RoundedCornerShape(14.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 38)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(row.member.fullName, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            AvatarImage(url = row.member.avatarUrl, name = row.member.fullName, size = 28)
+                            Spacer(Modifier.width(8.dp))
+                            Row(
+                                Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    row.member.fullName, color = Color.White,
+                                    fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f, fill = false)
+                                )
+                                Spacer(Modifier.width(6.dp))
                                 Text(
                                     if (row.member.id == squad.captainId) "Captain" else row.squadRole,
                                     color = if (row.member.id == squad.captainId) GoldLight else Color(0xFFC4CEDC),
-                                    fontSize = 11.sp
+                                    fontSize = 9.sp, maxLines = 1
                                 )
                             }
                             if ((isCaptain || isPresident) && row.member.id != me.id) {
