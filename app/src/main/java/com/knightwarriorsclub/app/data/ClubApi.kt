@@ -1801,7 +1801,7 @@ object ClubApi {
         runCatching {
             val payload = buildJsonObject {
                 put("title", title); put("created_by", me)
-                put("nominee_ids", buildJsonArray { nomineeIds.forEach { add(it) } })
+                put("nominee_ids", buildJsonArray { nomineeIds.forEach { add(JsonPrimitive(it)) } })
             }
             val (code, body) = restPost(session, "/rest/v1/mvp_ballots", payload.toString())
             check(code in 200..299) { "ballot create failed: $code $body" }
