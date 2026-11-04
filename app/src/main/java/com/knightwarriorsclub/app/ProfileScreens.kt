@@ -228,7 +228,14 @@ fun MemberProfileScreen(
     // friend state used to go stale ("Request sent" after acceptance)
     // until you left and came back.
     suspend fun loadProfile() {
-        val mm = ClubApi.memberById(session, memberId)
+        // beta66 (Pranto): a one-off network hiccup used to dead-end this
+        // screen ("could not be loaded", 2026-11-04) — retry once before
+        // giving up, and the error state below offers a manual retry too
+        var mm = ClubApi.memberById(session, memberId)
+        if (mm == null) {
+            kotlinx.coroutines.delay(700)
+            mm = ClubApi.memberById(session, memberId)
+        }
         member = mm
         games = ClubApi.memberGames(session, memberId)
         squads = ClubApi.squadsOf(session, memberId)
@@ -453,6 +460,11 @@ fun MemberProfileScreen(
         }
         if (m == null) {
             Text("This profile could not be loaded.", color = Color(0xFFC4CEDC), fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+            Button(onClick = {
+                loaded = false
+                scope.launch { loadProfile() }
+            }) { Text("Tap to retry") }
             return@Column
         }
         PullToRefreshBox(

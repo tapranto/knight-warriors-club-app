@@ -325,6 +325,9 @@ fun ClubApp(
         screen = if (mid != null) Screen.Profile(mid, Screen.Tabs) else Screen.Tabs
     }
     BackHandler(enabled = session != null && screen is Screen.Squads) { screen = Screen.Tabs }
+    // beta66 (Pranto): AllSquads was the one full screen with NO back
+    // handler — the system back button closed the whole app from it
+    BackHandler(enabled = session != null && screen is Screen.AllSquads) { screen = Screen.Tabs }
     BackHandler(enabled = session != null && screen is Screen.CreateSquad) { screen = Screen.Squads }
     BackHandler(enabled = session != null && screen is Screen.SquadChat) {
         screen = (screen as Screen.SquadChat).backTo
